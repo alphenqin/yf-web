@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: yaf-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: yaf_config
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - yaf-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ZooKeeper
+  zookeeper:
+    image: zookeeper:3.9
+    container_name: yaf-zookeeper
+    environment:
+      ZOO_MY_ID: 1
+      ZOO_SERVERS: server.1=zookeeper:2888:3888;2181
+    ports:
+      - "2181:2181"
+    volumes:
+      - zk_data:/data
+      - zk_datalog:/datalog
+    networks:
+      - yaf-network
+    healthcheck:
+      test: ["CMD", "zkServer.sh", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 后端服务
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: yaf-config-backend
+    environment:
+      SERVER_PORT: 8080
+      SERVER_MODE: release
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      DATABASE_DBNAME: yaf_config
+      DATABASE_SSLMODE: disable
+      ZOOKEEPER_SERVERS: zookeeper:2181
+    ports:
+      - "8080:8080"
+    networks:
+      - yaf-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      zookeeper:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # 前端服务
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: yaf-config-frontend
+    ports:
+      - "3000:80"
+    networks:
+      - yaf-network
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+networks:
+  yaf-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  zk_data:
+  zk_datalog:
+

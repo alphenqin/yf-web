@@ -1,0 +1,357 @@
+# ================================
+# YAF 容器 Dockerfile (集成 Config Agent + flow2ftp)
+# ================================
+# 支持多平台构建：linux/amd64, linux/arm64
+#
+# 构建方式:
+#   单平台构建:
+#     docker build -f docker/Dockerfile.yaf -t yaf-with-agent:1.0 .
+#
+#   多平台构建:
+#     docker buildx build --platform linux/amd64,linux/arm64 \
+#       -f docker/Dockerfile.yaf -t yaf-with-agent:1.0 --push .
+# ================================
+
+# ================================
+# 1. Go 编译阶段：编译 config-agent 和 flow2ftp
+# ================================
+FROM --platform=$BUILDPLATFORM golang:1.21-alpine AS go-builder
+
+# 多平台参数（Docker BuildKit 自动提供）
+ARG TARGETOS
+ARG TARGETARCH
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+
+WORKDIR /build
+
+# ===== 编译 config-agent =====
+WORKDIR /build/config-agent
+COPY config-agent/go.mod config-agent/go.sum ./
+RUN go mod download
+COPY config-agent/ ./
+
+# 交叉编译 config-agent
+RUN set -eux; \
+    echo "Building config-agent for ${TARGETOS}/${TARGETARCH} (build platform: ${BUILDPLATFORM})"; \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -ldflags="-w -s" -o /build/yaf-config-agent ./cmd/agent && \
+    chmod +x /build/yaf-config-agent
+
+# ===== 编译 flow2ftp =====
+WORKDIR /build/yaf-ftp
+COPY yaf-ftp/go.mod yaf-ftp/go.sum ./
+RUN go mod download
+COPY yaf-ftp/ ./
+
+# 交叉编译 flow2ftp
+RUN set -eux; \
+    echo "Building flow2ftp for ${TARGETOS}/${TARGETARCH} (build platform: ${BUILDPLATFORM})"; \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -ldflags="-w -s" -o /build/flow2ftp ./cmd/flow2ftp && \
+    chmod +x /build/flow2ftp
+
+# ================================
+# 2. 构建阶段：编译 libfixbuf / YAF / super_mediator
+# ================================
+FROM debian:bookworm-slim AS builder
+
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+ARG APT_PROXY
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+
+ARG FIXBUF_VERSION=3.0.0.alpha2
+ARG YAF_VERSION=3.0.0.alpha4
+ARG SM_VERSION=2.0.0.alpha3
+
+# 安装编译依赖
+RUN set -eux; \
+    rm -f /etc/apt/sources.list.d/debian.sources || true; \
+    echo "deb http://mirrors.aliyun.com/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list; \
+    echo "deb http://mirrors.aliyun.com/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list; \
+    echo "deb http://mirrors.aliyun.com/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        build-essential pkg-config wget curl ca-certificates \
+        libglib2.0-dev libpcap-dev libpcre3-dev zlib1g-dev libssl-dev liblua5.3-dev; \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp
+
+# libfixbuf
+RUN HTTP_PROXY=${APT_PROXY} HTTPS_PROXY=${APT_PROXY} \
+    curl -fSL "https://tools.netsa.cert.org/releases/libfixbuf-${FIXBUF_VERSION}.tar.gz" -o libfixbuf.tar.gz && \
+    tar xzf libfixbuf.tar.gz && \
+    cd "libfixbuf-${FIXBUF_VERSION}" && \
+    ./configure --disable-tools && make -j"$(nproc)" && make install && ldconfig && \
+    cd /tmp && rm -rf "libfixbuf-${FIXBUF_VERSION}" libfixbuf.tar.gz
+
+# YAF
+RUN HTTP_PROXY=${APT_PROXY} HTTPS_PROXY=${APT_PROXY} \
+    curl -fSL "https://tools.netsa.cert.org/releases/yaf-${YAF_VERSION}.tar.gz" -o yaf.tar.gz && \
+    tar xzf yaf.tar.gz && \
+    cd "yaf-${YAF_VERSION}" && \
+    ./configure --enable-applabel --enable-dpi && \
+    make -j"$(nproc)" && make install && ldconfig && \
+    cd /tmp && rm -rf "yaf-${YAF_VERSION}" yaf.tar.gz
+
+# super_mediator
+RUN HTTP_PROXY=${APT_PROXY} HTTPS_PROXY=${APT_PROXY} \
+    curl -fSL "https://tools.netsa.cert.org/releases/super_mediator-${SM_VERSION}.tar.gz" -o sm.tar.gz && \
+    tar xzf sm.tar.gz && \
+    cd "super_mediator-${SM_VERSION}" && \
+    ./configure --with-mysql=no && \
+    make -j"$(nproc)" && make install && ldconfig && \
+    cd /tmp && rm -rf "super_mediator-${SM_VERSION}" sm.tar.gz
+
+# ================================
+# 3. 运行阶段
+# ================================
+FROM debian:bookworm-slim AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN set -eux; \
+    rm -f /etc/apt/sources.list.d/debian.sources || true; \
+    echo "deb http://mirrors.aliyun.com/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list; \
+    echo "deb http://mirrors.aliyun.com/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list; \
+    echo "deb http://mirrors.aliyun.com/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates libglib2.0-0 libpcap0.8 libpcre3 zlib1g libssl3 liblua5.3-0 \
+        bash procps tcpdump netcat-traditional iproute2 net-tools dnsutils psmisc vim-tiny less \
+        supervisor tzdata; \
+    ln -fs /usr/share/zoneinfo/Asia/Shanghai /etc/localtime; \
+    echo "Asia/Shanghai" > /etc/timezone; dpkg-reconfigure -f noninteractive tzdata; \
+    rm -rf /var/lib/apt/lists/*
+
+ENV TZ=Asia/Shanghai
+
+# 复制编译好的库和可执行文件
+COPY --from=builder /usr/local/ /usr/local/
+
+# 复制 config-agent（已交叉编译为目标平台）
+COPY --from=go-builder /build/yaf-config-agent /usr/local/bin/yaf-config-agent
+RUN chmod +x /usr/local/bin/yaf-config-agent
+
+# 复制 flow2ftp（已交叉编译为目标平台）
+COPY --from=go-builder /build/flow2ftp /usr/local/bin/flow2ftp
+RUN chmod +x /usr/local/bin/flow2ftp
+
+RUN echo "/usr/local/lib"  >  /etc/ld.so.conf.d/usr-local.conf; \
+    echo "/usr/local/lib64" >> /etc/ld.so.conf.d/usr-local.conf; \
+    ldconfig
+
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64
+
+# 构建期自检
+RUN set -eux; \
+    echo "=== 构建期自检：验证可执行文件 ==="; \
+    echo "Platform: $(uname -m)"; \
+    /usr/local/bin/yaf --version || (echo "ERROR: yaf not found" && exit 1); \
+    /usr/local/bin/super_mediator --version 2>&1 || echo "WARN: super_mediator --version"; \
+    /usr/local/bin/yaf-config-agent --help 2>&1 || echo "INFO: config-agent ready"; \
+    /usr/local/bin/flow2ftp --help 2>&1 || echo "INFO: flow2ftp ready"; \
+    ls -lh /usr/local/bin/yaf /usr/local/bin/super_mediator /usr/local/bin/yaf-config-agent /usr/local/bin/flow2ftp; \
+    echo "=== 构建期自检通过 ==="
+
+# 创建非 root 用户
+RUN set -eux; \
+    groupadd -r yaf && \
+    useradd -r -g yaf -d /var/lib/yaf -s /usr/sbin/nologin yaf; \
+    mkdir -p /var/lib/yaf
+
+# 创建目录
+RUN set -eux; \
+    mkdir -p /data /etc/yaf /var/log/supervisor /var/run/supervisor /opt/yaf; \
+    chown -R yaf:yaf /data /var/log/supervisor /var/run/supervisor /opt/yaf; \
+    chown -R root:root /etc/yaf; \
+    chmod 755 /var/run/supervisor
+
+# 默认配置文件
+RUN cat >/opt/yaf/yaf.init <<'EOF'
+-- ========= YAF 基础配置 =========
+
+-- 从网卡抓包（容器内网卡名，常见为 eth0，按需修改）
+input = {
+  type = "pcap",
+  inf  = "eth0",
+  export_interface = true,
+}
+
+-- 输出 IPFIX 到本机 18000/tcp（super_mediator 在这个端口收）
+output = {
+  host     = "127.0.0.1",
+  port     = "18000",
+  protocol = "tcp",
+}
+
+-- 解码选项（按需改）
+decode = {
+  ip4_only = false,
+  ip6_only = false,
+  nofrag   = false,
+}
+
+-- 导出选项（适配 SiLK / super_mediator）
+export = {
+  silk       = true,
+  uniflow    = true,
+  flow_stats = true,
+  mac        = true,
+}
+
+-- 流超时（单位：秒）
+idle_timeout   = 60    -- 空闲 300s 关闭流
+active_timeout = 60   -- 活跃 30min 切新流
+
+-- BPF 过滤器（示例：采集所有 IP，排除 ssh）
+filter = "ip and not port 22"
+
+-- 应用识别 / DPI
+applabel   = true
+dpi        = false
+maxpayload = 1024       -- 每方向最多采 1024 字节 payload
+maxexport  = maxpayload
+udp_payload = true
+stats       = 300       -- 每 300s 输出一次统计记录
+
+-- ========= flow2ftp 扩展配置 =========
+-- YAF 不会使用此块，flow2ftp 会从这里读取配置
+
+flow2ftp = {
+  -- FTP 服务器
+  ftp_host = "localhost",
+  ftp_port = 21,
+  ftp_user = "anonymous",
+  ftp_pass = "",
+  ftp_dir  = "/",
+
+  -- 本地滚动文件策略
+  rotate_interval_sec = 60,  -- 每 60s 强制切新文件
+  rotate_size_mb      = 100,  -- 单文件最大 100 MiB
+  file_prefix         = "flows_",  -- flows_YYYYMMDD_HHMMSS_xxx.csv.gz
+
+  -- 定时上传策略
+  upload_interval_sec = 60,   -- 每 60s 扫描 /data，把未上传 .gz 推 FTP
+
+  -- 时区（默认东八区，显式指定方便对齐本地时间）
+  timezone = "Asia/Shanghai"
+}
+EOF
+
+RUN ln -sf /opt/yaf/yaf.init /etc/yaf/yaf.init && \
+    chown -R yaf:yaf /opt/yaf
+
+# 启动脚本
+RUN cat >/usr/local/bin/start_yaf.sh <<'EOF'
+#!/usr/bin/env bash
+set -eu
+YAF_CONFIG_FILE="${YAF_CONFIG_FILE:-/etc/yaf/yaf.init}"
+echo "[start_yaf] 使用 YAF 配置文件: ${YAF_CONFIG_FILE}"
+if [ ! -f "${YAF_CONFIG_FILE}" ]; then
+  echo "[start_yaf] ERROR: 未找到 ${YAF_CONFIG_FILE}" >&2
+  exit 1
+fi
+exec /usr/local/bin/yaf --config "${YAF_CONFIG_FILE}" "$@"
+EOF
+
+RUN cat >/usr/local/bin/start_pipeline.sh <<'EOF'
+#!/usr/bin/env bash
+set -eu
+YAF_CONFIG_FILE="${YAF_CONFIG_FILE:-/etc/yaf/yaf.init}"
+SM_LISTEN_PORT="${SM_LISTEN_PORT:-18000}"
+SM_FIELDS="${SM_FIELDS:-flowStartMilliseconds,flowEndMilliseconds,sourceIPv4Address,destinationIPv4Address,sourceTransportPort,destinationTransportPort,protocolIdentifier,silkAppLabel}"
+echo "[start_pipeline] super_mediator 监听端口: ${SM_LISTEN_PORT}"
+echo "[start_pipeline] TEXT 输出字段: ${SM_FIELDS}"
+exec /bin/bash -c "
+  /usr/local/bin/super_mediator \
+    --ipfix-input=tcp \
+    --ipfix-port=\"${SM_LISTEN_PORT}\" \
+    --output-mode=TEXT \
+    --print-headers \
+    --out=- \
+    --fields=\"${SM_FIELDS}\" \
+    localhost \
+  | /usr/local/bin/flow2ftp -config \"${YAF_CONFIG_FILE}\" -data-dir /data
+"
+EOF
+
+RUN sed -i 's/\r$//' /usr/local/bin/start_yaf.sh /usr/local/bin/start_pipeline.sh && \
+    chmod +x /usr/local/bin/start_yaf.sh /usr/local/bin/start_pipeline.sh
+
+# supervisor 配置（包含 config-agent）
+RUN cat >/etc/supervisor/supervisord.conf <<'EOF'
+[unix_http_server]
+file=/var/run/supervisor/supervisor.sock
+chmod=0700
+
+[supervisord]
+nodaemon=true
+logfile=/dev/stdout
+logfile_maxbytes=0
+logfile_backups=0
+pidfile=/var/run/supervisor/supervisord.pid
+user=root
+
+[rpcinterface:supervisor]
+supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+[supervisorctl]
+serverurl=unix:///var/run/supervisor/supervisor.sock
+
+[program:yaf]
+command=/bin/bash /usr/local/bin/start_yaf.sh
+user=root
+autorestart=true
+startsecs=3
+environment=PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",LD_LIBRARY_PATH="/usr/local/lib:/usr/local/lib64"
+stdout_logfile=/var/log/supervisor/yaf.log
+stdout_logfile_maxbytes=20MB
+stdout_logfile_backups=5
+stderr_logfile=/dev/stdout
+stderr_logfile_maxbytes=0
+stderr_logfile_backups=0
+
+[program:pipeline]
+command=/bin/bash /usr/local/bin/start_pipeline.sh
+user=yaf
+autorestart=true
+startsecs=3
+environment=PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",LD_LIBRARY_PATH="/usr/local/lib:/usr/local/lib64"
+stdout_logfile=/var/log/supervisor/pipeline.log
+stdout_logfile_maxbytes=20MB
+stdout_logfile_backups=5
+stderr_logfile=/dev/stdout
+stderr_logfile_maxbytes=0
+stderr_logfile_backups=0
+
+[program:config-agent]
+command=/usr/local/bin/yaf-config-agent
+user=root
+autorestart=true
+startsecs=3
+environment=PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+stdout_logfile=/var/log/supervisor/config-agent.log
+stdout_logfile_maxbytes=20MB
+stdout_logfile_backups=5
+stderr_logfile=/dev/stdout
+stderr_logfile_maxbytes=0
+stderr_logfile_backups=0
+EOF
+
+WORKDIR /opt/yaf
+
+# 默认环境变量
+ENV ZK_SERVERS=zookeeper:2181
+ENV YAF_CLUSTER=default
+ENV YAF_NODE_ID=node-1
+ENV YAF_CONFIG_PATH=/etc/yaf/yaf.init
+ENV YAF_INTERFACE=eth0
+ENV SM_LISTEN_PORT=18000
+
+ENTRYPOINT ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]
+CMD []

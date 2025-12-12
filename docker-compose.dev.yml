@@ -1,0 +1,45 @@
+# 开发环境 docker-compose 配置
+# 只启动依赖服务（数据库和 ZooKeeper）
+
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: yaf-postgres-dev
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: yaf_config
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - yaf-network-dev
+
+  # ZooKeeper
+  zookeeper:
+    image: zookeeper:3.9
+    container_name: yaf-zookeeper-dev
+    environment:
+      ZOO_MY_ID: 1
+      ZOO_SERVERS: server.1=zookeeper:2888:3888;2181
+    ports:
+      - "2181:2181"
+    volumes:
+      - zk_data_dev:/data
+      - zk_datalog_dev:/datalog
+    networks:
+      - yaf-network-dev
+
+networks:
+  yaf-network-dev:
+    driver: bridge
+
+volumes:
+  postgres_data_dev:
+  zk_data_dev:
+  zk_datalog_dev:
+

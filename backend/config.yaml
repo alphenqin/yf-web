@@ -1,0 +1,15 @@
+server:
+  port: 8080
+  mode: debug  # debug / release
+
+database:
+  host: localhost
+  port: 5432
+  user: postgres
+  password: postgres
+  dbname: yaf_config
+  sslmode: disable
+
+zookeeper:
+  servers: localhost:2181
+
