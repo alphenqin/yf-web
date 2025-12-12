@@ -116,7 +116,7 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 .global-config-page {
-  max-width: 900px;
+  max-width: 100%;
 }
 
 .page-title {

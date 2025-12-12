@@ -1,182 +1,174 @@
 <template>
   <div class="config-form">
-    <!-- 采集配置 -->
-    <el-card class="config-section">
-      <template #header>
-        <div class="section-header">
-          <el-icon><Timer /></el-icon>
-          <span>采集配置</span>
-        </div>
-      </template>
-      
-      <el-form :model="formData" label-width="140px" label-position="left">
-        <el-form-item label="网卡名称">
-          <el-input 
-            v-model="formData.capture.interface" 
-            placeholder="eth0"
-            style="width: 200px"
-          />
-          <span class="form-hint">抓包网卡，如 eth0、ens33</span>
-        </el-form-item>
+    <!-- 上半部分：采集配置 + 过滤配置 并排 -->
+    <div class="config-row">
+      <!-- 采集配置 -->
+      <el-card class="config-section">
+        <template #header>
+          <div class="section-header">
+            <el-icon><Timer /></el-icon>
+            <span>采集配置</span>
+          </div>
+        </template>
         
-        <el-form-item label="IPFIX 端口">
-          <el-input-number 
-            v-model="formData.capture.ipfix_port" 
-            :min="1" 
-            :max="65535"
-            controls-position="right"
-          />
-          <span class="form-hint">IPFIX 输出端口，super_mediator 监听此端口</span>
-        </el-form-item>
-        
-        <el-form-item label="空闲超时 (秒)">
-          <el-input-number 
-            v-model="formData.capture.idle_timeout" 
-            :min="10" 
-            :max="3600" 
-            :step="10"
-            controls-position="right"
-          />
-          <span class="form-hint">流空闲多久后关闭，范围 10-3600 秒</span>
-        </el-form-item>
-        
-        <el-form-item label="活跃超时 (秒)">
-          <el-input-number 
-            v-model="formData.capture.active_timeout" 
-            :min="10" 
-            :max="3600" 
-            :step="10"
-            controls-position="right"
-          />
-          <span class="form-hint">活跃流多久后强制切新流，范围 10-3600 秒</span>
-        </el-form-item>
-        
-        <el-form-item label="统计间隔 (秒)">
-          <el-input-number 
-            v-model="formData.capture.stats_interval" 
-            :min="60" 
-            :max="3600" 
-            :step="60"
-            controls-position="right"
-          />
-          <span class="form-hint">每隔多少秒输出一次统计记录</span>
-        </el-form-item>
-        
-        <el-form-item label="应用识别">
-          <div class="switch-wrapper">
+        <el-form :model="formData" label-width="120px" label-position="left">
+          <el-form-item label="网卡名称">
+            <el-input 
+              v-model="formData.capture.interface" 
+              placeholder="eth0"
+            />
+          </el-form-item>
+          
+          <el-form-item label="IPFIX 端口">
+            <el-input-number 
+              v-model="formData.capture.ipfix_port" 
+              :min="1" 
+              :max="65535"
+              controls-position="right"
+              style="width: 100%"
+            />
+          </el-form-item>
+          
+          <el-form-item label="空闲超时 (秒)">
+            <el-input-number 
+              v-model="formData.capture.idle_timeout" 
+              :min="10" 
+              :max="3600" 
+              :step="10"
+              controls-position="right"
+              style="width: 100%"
+            />
+          </el-form-item>
+          
+          <el-form-item label="活跃超时 (秒)">
+            <el-input-number 
+              v-model="formData.capture.active_timeout" 
+              :min="10" 
+              :max="3600" 
+              :step="10"
+              controls-position="right"
+              style="width: 100%"
+            />
+          </el-form-item>
+          
+          <el-form-item label="统计间隔 (秒)">
+            <el-input-number 
+              v-model="formData.capture.stats_interval" 
+              :min="60" 
+              :max="3600" 
+              :step="60"
+              controls-position="right"
+              style="width: 100%"
+            />
+          </el-form-item>
+          
+          <el-form-item label="最大载荷">
+            <el-input-number 
+              v-model="formData.capture.max_payload" 
+              :min="0" 
+              :max="65535" 
+              :step="256"
+              controls-position="right"
+              style="width: 100%"
+            />
+          </el-form-item>
+          
+          <el-form-item label="应用识别">
             <el-switch v-model="formData.capture.enable_applabel" />
-            <span class="form-hint">启用 AppLabel 应用层协议识别</span>
-          </div>
-        </el-form-item>
-        
-        <el-form-item label="深度包检测">
-          <div class="switch-wrapper">
+            <span class="form-hint-inline">AppLabel</span>
+          </el-form-item>
+          
+          <el-form-item label="深度包检测">
             <el-switch v-model="formData.capture.enable_dpi" />
-            <span class="form-hint">启用 DPI 深度包检测</span>
-          </div>
-        </el-form-item>
-        
-        <el-form-item label="最大载荷">
-          <el-input-number 
-            v-model="formData.capture.max_payload" 
-            :min="0" 
-            :max="65535" 
-            :step="256"
-            controls-position="right"
-          />
-          <span class="form-hint">每方向最大采集字节数</span>
-        </el-form-item>
-      </el-form>
-    </el-card>
+            <span class="form-hint-inline">DPI</span>
+          </el-form-item>
+        </el-form>
+      </el-card>
     
-    <!-- 过滤配置 -->
-    <el-card class="config-section">
-      <template #header>
-        <div class="section-header">
-          <el-icon><Filter /></el-icon>
-          <span>过滤配置</span>
-        </div>
-      </template>
-      
-      <el-form :model="formData" label-width="140px" label-position="left">
-        <el-form-item label="IP 白名单">
-          <el-select
-            v-model="formData.filter.ip_whitelist"
-            multiple
-            filterable
-            allow-create
-            default-first-option
-            placeholder="输入 CIDR 格式，如 10.0.0.0/8，按回车确认"
-            style="width: 100%"
-          />
-          <span class="form-hint">只采集这些 IP 段的流量（CIDR 格式）</span>
-        </el-form-item>
+      <!-- 过滤配置 -->
+      <el-card class="config-section">
+        <template #header>
+          <div class="section-header">
+            <el-icon><Filter /></el-icon>
+            <span>过滤配置</span>
+          </div>
+        </template>
         
-        <el-form-item label="IP 黑名单">
-          <el-select
-            v-model="formData.filter.ip_blacklist"
-            multiple
-            filterable
-            allow-create
-            default-first-option
-            placeholder="输入 CIDR 格式，如 192.168.1.0/24，按回车确认"
-            style="width: 100%"
-          />
-          <span class="form-hint">排除这些 IP 段的流量</span>
-        </el-form-item>
-        
-        <el-form-item label="源端口">
-          <el-select
-            v-model="srcPortsModel"
-            multiple
-            filterable
-            allow-create
-            default-first-option
-            placeholder="输入端口号，如 80, 443"
-            style="width: 100%"
-            :reserve-keyword="false"
-          >
-            <el-option
-              v-for="port in commonPorts"
-              :key="port.value"
-              :label="`${port.value} (${port.label})`"
-              :value="port.value"
+        <el-form :model="formData" label-width="100px" label-position="left">
+          <el-form-item label="IP 白名单">
+            <el-select
+              v-model="formData.filter.ip_whitelist"
+              multiple
+              filterable
+              allow-create
+              default-first-option
+              placeholder="CIDR 格式，如 10.0.0.0/8"
+              style="width: 100%"
             />
-          </el-select>
-          <span class="form-hint">只采集这些源端口的流量</span>
-        </el-form-item>
-        
-        <el-form-item label="目的端口">
-          <el-select
-            v-model="dstPortsModel"
-            multiple
-            filterable
-            allow-create
-            default-first-option
-            placeholder="输入端口号，如 80, 443"
-            style="width: 100%"
-            :reserve-keyword="false"
-          >
-            <el-option
-              v-for="port in commonPorts"
-              :key="port.value"
-              :label="`${port.value} (${port.label})`"
-              :value="port.value"
+          </el-form-item>
+          
+          <el-form-item label="IP 黑名单">
+            <el-select
+              v-model="formData.filter.ip_blacklist"
+              multiple
+              filterable
+              allow-create
+              default-first-option
+              placeholder="CIDR 格式，如 192.168.1.0/24"
+              style="width: 100%"
             />
-          </el-select>
-          <span class="form-hint">只采集这些目的端口的流量</span>
-        </el-form-item>
-        
-        <el-form-item label="BPF 过滤器">
-          <el-input 
-            v-model="formData.filter.bpf_filter" 
-            placeholder="例如: ip and not port 22"
-            clearable
-          />
-          <span class="form-hint">Berkeley Packet Filter 表达式</span>
-        </el-form-item>
-      </el-form>
-    </el-card>
+          </el-form-item>
+          
+          <el-form-item label="源端口">
+            <el-select
+              v-model="srcPortsModel"
+              multiple
+              filterable
+              allow-create
+              default-first-option
+              placeholder="如 80, 443"
+              style="width: 100%"
+              :reserve-keyword="false"
+            >
+              <el-option
+                v-for="port in commonPorts"
+                :key="port.value"
+                :label="`${port.value} (${port.label})`"
+                :value="port.value"
+              />
+            </el-select>
+          </el-form-item>
+          
+          <el-form-item label="目的端口">
+            <el-select
+              v-model="dstPortsModel"
+              multiple
+              filterable
+              allow-create
+              default-first-option
+              placeholder="如 80, 443"
+              style="width: 100%"
+              :reserve-keyword="false"
+            >
+              <el-option
+                v-for="port in commonPorts"
+                :key="port.value"
+                :label="`${port.value} (${port.label})`"
+                :value="port.value"
+              />
+            </el-select>
+          </el-form-item>
+          
+          <el-form-item label="BPF 过滤器">
+            <el-input 
+              v-model="formData.filter.bpf_filter" 
+              placeholder="例如: ip and not port 22"
+              clearable
+            />
+          </el-form-item>
+        </el-form>
+      </el-card>
+    </div>
     
     <!-- 输出配置 -->
     <el-card class="config-section">
@@ -346,9 +338,31 @@ const handleSubmit = () => {
   gap: 24px;
 }
 
+.config-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  
+  @media (max-width: 1200px) {
+    grid-template-columns: 1fr;
+  }
+}
+
 .config-section {
   :deep(.el-card__header) {
+    padding: 14px 20px;
+  }
+  
+  :deep(.el-card__body) {
     padding: 16px 20px;
+  }
+  
+  :deep(.el-form-item) {
+    margin-bottom: 16px;
+    
+    &:last-child {
+      margin-bottom: 0;
+    }
   }
 }
 
@@ -370,7 +384,13 @@ const handleSubmit = () => {
   margin-left: 12px;
   font-size: 12px;
   color: var(--color-text-secondary);
-  pointer-events: none; // 确保不会拦截点击事件
+  pointer-events: none;
+}
+
+.form-hint-inline {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
 }
 
 .switch-wrapper {
@@ -392,8 +412,8 @@ const handleSubmit = () => {
 .fields-grid {
   :deep(.el-checkbox-group) {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 10px;
   }
 }
 

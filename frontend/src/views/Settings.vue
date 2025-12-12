@@ -158,7 +158,7 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 .settings-page {
-  max-width: 800px;
+  max-width: 100%;
 }
 
 .page-title {

@@ -56,14 +56,14 @@
       <el-empty description="暂无配置历史记录" />
     </div>
     
-    <el-table v-else :data="history" class="history-table">
-      <el-table-column prop="version" label="版本" width="100">
+    <el-table v-else :data="history" class="history-table" style="width: 100%">
+      <el-table-column prop="version" label="版本" width="80">
         <template #default="{ row }">
           <el-tag type="info" class="mono">v{{ row.version }}</el-tag>
         </template>
       </el-table-column>
       
-      <el-table-column prop="scope" label="作用范围" width="120">
+      <el-table-column prop="scope" label="作用范围" width="100">
         <template #default="{ row }">
           <el-tag 
             :type="getScopeTagType(row.scope)"
@@ -74,31 +74,31 @@
         </template>
       </el-table-column>
       
-      <el-table-column prop="cluster_name" label="集群" width="150">
+      <el-table-column prop="cluster_name" label="集群" min-width="150">
         <template #default="{ row }">
           <span class="mono">{{ row.cluster_name || '-' }}</span>
         </template>
       </el-table-column>
       
-      <el-table-column prop="node_id" label="节点" width="150">
+      <el-table-column prop="node_id" label="节点" min-width="150">
         <template #default="{ row }">
           <span class="mono">{{ row.node_id || '-' }}</span>
         </template>
       </el-table-column>
       
-      <el-table-column prop="created_by" label="操作人" width="120">
+      <el-table-column prop="created_by" label="操作人" min-width="120">
         <template #default="{ row }">
           {{ row.created_by || '系统' }}
         </template>
       </el-table-column>
       
-      <el-table-column prop="created_at" label="创建时间" width="180">
+      <el-table-column prop="created_at" label="创建时间" min-width="180">
         <template #default="{ row }">
           {{ formatTime(row.created_at) }}
         </template>
       </el-table-column>
       
-      <el-table-column label="操作" width="150" fixed="right">
+      <el-table-column label="操作" width="140" fixed="right">
         <template #default="{ row }">
           <el-button type="primary" text size="small" @click="viewConfig(row)">
             查看
@@ -247,7 +247,7 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 .config-history-page {
-  max-width: 1200px;
+  max-width: 100%;
 }
 
 .page-title {

@@ -275,7 +275,7 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 .cluster-detail-page {
-  max-width: 900px;
+  max-width: 100%;
 }
 
 .page-title {

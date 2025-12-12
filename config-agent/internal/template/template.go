@@ -74,7 +74,14 @@ flow2ftp = {
   rotate_size_mb      = 100,
   file_prefix         = "flows_",
   upload_interval_sec = 60,
-  timezone = "Asia/Shanghai"
+  timezone = "Asia/Shanghai",
+  
+  -- 输出字段列表
+  output_fields = {
+{{- range $i, $field := .OutputFields }}
+    "{{ $field }}",
+{{- end }}
+  }
 }
 `
 
@@ -97,6 +104,7 @@ type TemplateData struct {
 	FTPUser       string
 	FTPPass       string
 	FTPDir        string
+	OutputFields  []string
 }
 
 // Generator 配置文件生成器
@@ -167,6 +175,21 @@ func (g *Generator) Generate(cfg *config.YafConfig) error {
 		statsInterval = 300
 	}
 
+	// 准备输出字段，如果为空则使用默认字段
+	outputFields := cfg.Output.Fields
+	if len(outputFields) == 0 {
+		outputFields = []string{
+			"flowStartMilliseconds",
+			"flowEndMilliseconds",
+			"sourceIPv4Address",
+			"destinationIPv4Address",
+			"sourceTransportPort",
+			"destinationTransportPort",
+			"protocolIdentifier",
+			"silkAppLabel",
+		}
+	}
+
 	// 准备模板数据
 	data := TemplateData{
 		GeneratedAt:   "auto-generated",
@@ -186,6 +209,7 @@ func (g *Generator) Generate(cfg *config.YafConfig) error {
 		FTPUser:       g.ftpUser,
 		FTPPass:       g.ftpPass,
 		FTPDir:        g.ftpDir,
+		OutputFields:  outputFields,
 	}
 
 	// 渲染模板

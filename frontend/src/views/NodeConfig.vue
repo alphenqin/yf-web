@@ -130,7 +130,7 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 .node-config-page {
-  max-width: 900px;
+  max-width: 100%;
 }
 
 .page-title {
