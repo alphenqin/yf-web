@@ -163,11 +163,6 @@ zookeeper:
 | `YAF_CONFIG_PATH` | 配置文件路径 | `/etc/yaf/yaf.init` |
 | `YAF_INTERFACE` | 网卡名称 | `eth0` |
 | `SM_LISTEN_PORT` | super_mediator 监听端口 | `18000` |
-| `FTP_HOST` | FTP 服务器地址 | - |
-| `FTP_PORT` | FTP 端口 | `21` |
-| `FTP_USER` | FTP 用户名 | - |
-| `FTP_PASS` | FTP 密码 | - |
-| `FTP_DIR` | FTP 目录 | `/` |
 
 ## API 接口
 

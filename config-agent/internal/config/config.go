@@ -26,11 +26,19 @@ type OutputConfig struct {
 	Fields []string `json:"fields"`
 }
 
+// StatusReportConfig 状态上报配置
+type StatusReportConfig struct {
+	StatusReportURL        string `json:"status_report_url"`         // 状态上报 URL，例如 "http://example.com/api/uploadStatus"
+	StatusReportIntervalSec int    `json:"status_report_interval_sec"` // 状态上报间隔（秒），默认 60
+	UUID                    string `json:"uuid"`                    // 容器主机名，如果为空则从环境变量 HOSTNAME 获取
+}
+
 // YafConfig YAF 完整配置
 type YafConfig struct {
-	Capture CaptureConfig `json:"capture"`
-	Filter  FilterConfig  `json:"filter"`
-	Output  OutputConfig  `json:"output"`
+	Capture      CaptureConfig      `json:"capture"`
+	Filter       FilterConfig       `json:"filter"`
+	Output       OutputConfig       `json:"output"`
+	StatusReport StatusReportConfig `json:"status_report"`
 }
 
 // MergeConfig 合并配置，后者覆盖前者
@@ -100,6 +108,20 @@ func MergeConfig(base, overlay *YafConfig) *YafConfig {
 		merged.Output.Fields = overlay.Output.Fields
 	}
 
+	// StatusReport 配置合并
+	merged.StatusReport.StatusReportURL = base.StatusReport.StatusReportURL
+	if overlay.StatusReport.StatusReportURL != "" {
+		merged.StatusReport.StatusReportURL = overlay.StatusReport.StatusReportURL
+	}
+	merged.StatusReport.StatusReportIntervalSec = base.StatusReport.StatusReportIntervalSec
+	if overlay.StatusReport.StatusReportIntervalSec > 0 {
+		merged.StatusReport.StatusReportIntervalSec = overlay.StatusReport.StatusReportIntervalSec
+	}
+	merged.StatusReport.UUID = base.StatusReport.UUID
+	if overlay.StatusReport.UUID != "" {
+		merged.StatusReport.UUID = overlay.StatusReport.UUID
+	}
+
 	return merged
 }
 
@@ -134,6 +156,11 @@ func DefaultConfig() *YafConfig {
 				"protocolIdentifier",
 				"silkAppLabel",
 			},
+		},
+		StatusReport: StatusReportConfig{
+			StatusReportURL:        "",
+			StatusReportIntervalSec: 60,
+			UUID:                   "",
 		},
 	}
 }

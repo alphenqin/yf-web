@@ -170,6 +170,48 @@
       </el-card>
     </div>
     
+    <!-- 状态上报配置 -->
+    <el-card class="config-section">
+      <template #header>
+        <div class="section-header">
+          <el-icon><Upload /></el-icon>
+          <span>状态上报</span>
+        </div>
+      </template>
+      
+      <el-form :model="formData" label-width="160px" label-position="left">
+        <el-form-item label="上报 URL">
+          <el-input 
+            v-model="formData.status_report.status_report_url" 
+            placeholder="http://example.com/api/uploadStatus"
+            clearable
+          />
+          <span class="form-hint">状态信息上报的 HTTP POST URL</span>
+        </el-form-item>
+        
+        <el-form-item label="上报间隔 (秒)">
+          <el-input-number 
+            v-model="formData.status_report.status_report_interval_sec" 
+            :min="10" 
+            :max="3600" 
+            :step="10"
+            controls-position="right"
+            style="width: 100%"
+          />
+          <span class="form-hint">每隔多少秒上报一次状态信息</span>
+        </el-form-item>
+        
+        <el-form-item label="容器主机名">
+          <el-input 
+            v-model="formData.status_report.uuid" 
+            placeholder="留空则自动从环境变量获取"
+            clearable
+          />
+          <span class="form-hint">容器的唯一标识，留空则从 HOSTNAME 环境变量获取</span>
+        </el-form-item>
+      </el-form>
+    </el-card>
+    
     <!-- 输出配置 -->
     <el-card class="config-section">
       <template #header>
@@ -250,6 +292,11 @@ const getDefaultFormData = () => ({
     dst_ports: [],
     bpf_filter: 'ip and not port 22'
   },
+  status_report: {
+    status_report_url: '',
+    status_report_interval_sec: 60,
+    uuid: ''
+  },
   output: {
     fields: []
   }
@@ -267,6 +314,7 @@ watch(() => props.modelValue, (newVal, oldVal) => {
   if (newVal && JSON.stringify(newVal) !== JSON.stringify(toRaw(formData))) {
     Object.assign(formData.capture, cloneData(newVal.capture || {}))
     Object.assign(formData.filter, cloneData(newVal.filter || {}))
+    Object.assign(formData.status_report, cloneData(newVal.status_report || {}))
     Object.assign(formData.output, cloneData(newVal.output || {}))
   }
 }, { deep: true })

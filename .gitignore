@@ -9,66 +9,138 @@
 go.work
 go.work.sum
 
+# Go 模块缓存（可选，通常不需要忽略）
+# vendor/
+
 # 项目编译的二进制文件
 backend/server
 backend/yaf-config-server
+backend/cmd/server/server
 config-agent/agent
 config-agent/yaf-config-agent
+config-agent/cmd/agent/agent
 yaf-ftp/flow2ftp
+yaf-ftp/cmd/flow2ftp/flow2ftp
+yaf-processor/processor
+yaf-processor/cmd/processor/processor
 
-# ========== Node.js / Vue ==========
+# ========== Node.js / Vue / 前端 ==========
 # 依赖目录
 frontend/node_modules/
 node_modules/
+**/node_modules/
 
 # 构建输出
 frontend/dist/
+frontend/build/
+dist/
+build/
+
+# Vite 缓存
+frontend/.vite/
+.vite/
 
 # 日志
 npm-debug.log*
 yarn-debug.log*
+yarn-error.log*
 pnpm-debug.log*
+lerna-debug.log*
 *.local
 
-# ========== IDE ==========
+# 包管理器锁文件（可选，通常保留 package-lock.json）
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# ========== IDE 和编辑器 ==========
 .vscode/
 .idea/
 .cursor/
 *.code-workspace
 *.iml
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
 
 # ========== 系统文件 ==========
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 Desktop.ini
+$RECYCLE.BIN/
 
 # ========== 环境和本地配置 ==========
 .env
 .env.*
 *.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 backend/config.local.yaml
+backend/config.*.yaml
+!backend/config.yaml
 
 # ========== Docker 数据 ==========
 docker-data/
 postgres-data/
 zookeeper-data/
+*.pid
+*.seed
+*.pid.lock
 
 # ========== 日志和临时文件 ==========
 *.log
 *.tmp
 *.temp
-*.swp
-*.swo
-*~
+logs/
+*.log.*
 
 # 测试覆盖率
 coverage/
 *.cover
 *.coverage
 coverage.txt
+.nyc_output/
 
-# ========== 敏感文件 ==========
+# ========== 敏感文件和密钥 ==========
 secrets/
 *.pem
 *.key
 *.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_rsa.pub
+*.secret
+*.token
+
+# ========== 数据库文件 ==========
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# ========== 备份文件 ==========
+*.bak
+*.backup
+*.old
+*~
+
+# ========== 其他 ==========
+.cache/
+.temp/
+temp/
+tmp/

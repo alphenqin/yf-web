@@ -1,5 +1,5 @@
 # ================================
-# YAF 容器 Dockerfile (集成 Config Agent + flow2ftp)
+# YAF 容器 Dockerfile (集成 Config Agent + processor)
 # ================================
 # 支持多平台构建：linux/amd64, linux/arm64
 #
@@ -13,7 +13,7 @@
 # ================================
 
 # ================================
-# 1. Go 编译阶段：编译 config-agent 和 flow2ftp
+# 1. Go 编译阶段：编译 config-agent 和 processor
 # ================================
 FROM --platform=$BUILDPLATFORM golang:1.21-alpine AS go-builder
 
@@ -38,18 +38,18 @@ RUN set -eux; \
     go build -ldflags="-w -s" -o /build/yaf-config-agent ./cmd/agent && \
     chmod +x /build/yaf-config-agent
 
-# ===== 编译 flow2ftp =====
-WORKDIR /build/yaf-ftp
-COPY yaf-ftp/go.mod yaf-ftp/go.sum ./
+# ===== 编译 processor =====
+WORKDIR /build/yaf-processor
+COPY yaf-processor/go.mod yaf-processor/go.sum ./
 RUN go mod download
-COPY yaf-ftp/ ./
+COPY yaf-processor/ ./
 
-# 交叉编译 flow2ftp
+# 交叉编译 processor
 RUN set -eux; \
-    echo "Building flow2ftp for ${TARGETOS}/${TARGETARCH} (build platform: ${BUILDPLATFORM})"; \
+    echo "Building processor for ${TARGETOS}/${TARGETARCH} (build platform: ${BUILDPLATFORM})"; \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -ldflags="-w -s" -o /build/flow2ftp ./cmd/flow2ftp && \
-    chmod +x /build/flow2ftp
+    go build -ldflags="-w -s" -o /build/processor ./cmd/processor && \
+    chmod +x /build/processor
 
 # ================================
 # 2. 构建阶段：编译 libfixbuf / YAF / super_mediator
@@ -137,9 +137,9 @@ COPY --from=builder /usr/local/ /usr/local/
 COPY --from=go-builder /build/yaf-config-agent /usr/local/bin/yaf-config-agent
 RUN chmod +x /usr/local/bin/yaf-config-agent
 
-# 复制 flow2ftp（已交叉编译为目标平台）
-COPY --from=go-builder /build/flow2ftp /usr/local/bin/flow2ftp
-RUN chmod +x /usr/local/bin/flow2ftp
+# 复制 processor（已交叉编译为目标平台）
+COPY --from=go-builder /build/processor /usr/local/bin/processor
+RUN chmod +x /usr/local/bin/processor
 
 RUN echo "/usr/local/lib"  >  /etc/ld.so.conf.d/usr-local.conf; \
     echo "/usr/local/lib64" >> /etc/ld.so.conf.d/usr-local.conf; \
@@ -154,8 +154,8 @@ RUN set -eux; \
     /usr/local/bin/yaf --version || (echo "ERROR: yaf not found" && exit 1); \
     /usr/local/bin/super_mediator --version 2>&1 || echo "WARN: super_mediator --version"; \
     /usr/local/bin/yaf-config-agent --help 2>&1 || echo "INFO: config-agent ready"; \
-    /usr/local/bin/flow2ftp --help 2>&1 || echo "INFO: flow2ftp ready"; \
-    ls -lh /usr/local/bin/yaf /usr/local/bin/super_mediator /usr/local/bin/yaf-config-agent /usr/local/bin/flow2ftp; \
+    /usr/local/bin/processor --help 2>&1 || echo "INFO: processor ready"; \
+    ls -lh /usr/local/bin/yaf /usr/local/bin/super_mediator /usr/local/bin/yaf-config-agent /usr/local/bin/processor; \
     echo "=== 构建期自检通过 ==="
 
 # 创建非 root 用户
@@ -219,27 +219,25 @@ maxexport  = maxpayload
 udp_payload = true
 stats       = 300       -- 每 300s 输出一次统计记录
 
--- ========= flow2ftp 扩展配置 =========
--- YAF 不会使用此块，flow2ftp 会从这里读取配置
+-- ========= processor 扩展配置 =========
+-- YAF 不会使用此块，processor 会从这里读取配置
 
-flow2ftp = {
-  -- FTP 服务器
-  ftp_host = "localhost",
-  ftp_port = 21,
-  ftp_user = "anonymous",
-  ftp_pass = "",
-  ftp_dir  = "/",
-
+processor = {
   -- 本地滚动文件策略
   rotate_interval_sec = 60,  -- 每 60s 强制切新文件
   rotate_size_mb      = 100,  -- 单文件最大 100 MiB
   file_prefix         = "flows_",  -- flows_YYYYMMDD_HHMMSS_xxx.csv.gz
 
-  -- 定时上传策略
-  upload_interval_sec = 60,   -- 每 60s 扫描 /data，把未上传 .gz 推 FTP
+  -- 输出类型（file/kafka/mq等，未来扩展）
+  output_type = "file",
 
   -- 时区（默认东八区，显式指定方便对齐本地时间）
-  timezone = "Asia/Shanghai"
+  timezone = "Asia/Shanghai",
+
+  -- 状态上报配置（可选）
+  -- status_report_url = "http://example.com/api/uploadStatus",
+  -- status_report_interval_sec = 60,
+  -- uuid = "container-hostname",
 }
 EOF
 
@@ -276,7 +274,7 @@ exec /bin/bash -c "
     --out=- \
     --fields=\"${SM_FIELDS}\" \
     localhost \
-  | /usr/local/bin/flow2ftp -config \"${YAF_CONFIG_FILE}\" -data-dir /data
+  | /usr/local/bin/processor -config \"${YAF_CONFIG_FILE}\" -data-dir /data
 "
 EOF
 

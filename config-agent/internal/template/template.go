@@ -63,48 +63,50 @@ maxexport  = {{ .MaxPayload }}
 udp_payload = true
 stats       = {{ .StatsInterval }}
 
--- ========= flow2ftp 扩展配置 =========
-flow2ftp = {
-  ftp_host = "{{ .FTPHost }}",
-  ftp_port = {{ .FTPPort }},
-  ftp_user = "{{ .FTPUser }}",
-  ftp_pass = "{{ .FTPPass }}",
-  ftp_dir  = "{{ .FTPDir }}",
+-- ========= processor 扩展配置 =========
+processor = {
   rotate_interval_sec = 60,
   rotate_size_mb      = 100,
   file_prefix         = "flows_",
-  upload_interval_sec = 60,
   timezone = "Asia/Shanghai",
+  
+  -- 输出类型（file/kafka/mq等，未来扩展）
+  output_type = "file",
   
   -- 输出字段列表
   output_fields = {
 {{- range $i, $field := .OutputFields }}
     "{{ $field }}",
 {{- end }}
-  }
+  },
+  
+  -- 状态上报配置
+  status_report_url = "{{ .StatusReportURL }}",
+  status_report_interval_sec = {{ .StatusReportIntervalSec }},
+{{- if .UUID }}
+  uuid = "{{ .UUID }}",
+{{- end }}
 }
 `
 
 // TemplateData 模板数据
 type TemplateData struct {
-	GeneratedAt   string
-	Cluster       string
-	NodeID        string
-	Interface     string
-	IPFIXPort     int
-	IdleTimeout   int
-	ActiveTimeout int
-	StatsInterval int
-	BPFFilter     string
-	AppLabel      string
-	DPI           string
-	MaxPayload    int
-	FTPHost       string
-	FTPPort       int
-	FTPUser       string
-	FTPPass       string
-	FTPDir        string
-	OutputFields  []string
+	GeneratedAt             string
+	Cluster                 string
+	NodeID                  string
+	Interface               string
+	IPFIXPort               int
+	IdleTimeout             int
+	ActiveTimeout           int
+	StatsInterval           int
+	BPFFilter               string
+	AppLabel                string
+	DPI                     string
+	MaxPayload              int
+	OutputFields            []string
+	StatusReportURL         string
+	StatusReportIntervalSec int
+	UUID                    string
 }
 
 // Generator 配置文件生成器
@@ -112,11 +114,6 @@ type Generator struct {
 	configPath string
 	interface_ string
 	ipfixPort  string
-	ftpHost    string
-	ftpPort    int
-	ftpUser    string
-	ftpPass    string
-	ftpDir     string
 	cluster    string
 	nodeID     string
 	logger     *zap.Logger
@@ -126,7 +123,6 @@ type Generator struct {
 // NewGenerator 创建生成器
 func NewGenerator(
 	configPath, interface_, ipfixPort string,
-	ftpHost string, ftpPort int, ftpUser, ftpPass, ftpDir string,
 	cluster, nodeID string,
 	logger *zap.Logger,
 ) (*Generator, error) {
@@ -139,11 +135,6 @@ func NewGenerator(
 		configPath: configPath,
 		interface_: interface_,
 		ipfixPort:  ipfixPort,
-		ftpHost:    ftpHost,
-		ftpPort:    ftpPort,
-		ftpUser:    ftpUser,
-		ftpPass:    ftpPass,
-		ftpDir:     ftpDir,
 		cluster:    cluster,
 		nodeID:     nodeID,
 		logger:     logger,
@@ -190,26 +181,32 @@ func (g *Generator) Generate(cfg *config.YafConfig) error {
 		}
 	}
 
+	// 准备状态上报配置
+	statusReportURL := cfg.StatusReport.StatusReportURL
+	statusReportIntervalSec := cfg.StatusReport.StatusReportIntervalSec
+	if statusReportIntervalSec == 0 {
+		statusReportIntervalSec = 60 // 默认 60 秒
+	}
+	uuid := cfg.StatusReport.UUID
+
 	// 准备模板数据
 	data := TemplateData{
-		GeneratedAt:   "auto-generated",
-		Cluster:       g.cluster,
-		NodeID:        g.nodeID,
-		Interface:     iface,
-		IPFIXPort:     ipfixPort,
-		IdleTimeout:   idleTimeout,
-		ActiveTimeout: activeTimeout,
-		StatsInterval: statsInterval,
-		BPFFilter:     g.buildBPFFilter(cfg),
-		AppLabel:      boolToLua(cfg.Capture.EnableAppLabel),
-		DPI:           boolToLua(cfg.Capture.EnableDPI),
-		MaxPayload:    cfg.Capture.MaxPayload,
-		FTPHost:       g.ftpHost,
-		FTPPort:       g.ftpPort,
-		FTPUser:       g.ftpUser,
-		FTPPass:       g.ftpPass,
-		FTPDir:        g.ftpDir,
-		OutputFields:  outputFields,
+		GeneratedAt:             "auto-generated",
+		Cluster:                 g.cluster,
+		NodeID:                  g.nodeID,
+		Interface:               iface,
+		IPFIXPort:               ipfixPort,
+		IdleTimeout:             idleTimeout,
+		ActiveTimeout:           activeTimeout,
+		StatsInterval:           statsInterval,
+		BPFFilter:               g.buildBPFFilter(cfg),
+		AppLabel:                boolToLua(cfg.Capture.EnableAppLabel),
+		DPI:                     boolToLua(cfg.Capture.EnableDPI),
+		MaxPayload:              cfg.Capture.MaxPayload,
+		OutputFields:            outputFields,
+		StatusReportURL:         statusReportURL,
+		StatusReportIntervalSec: statusReportIntervalSec,
+		UUID:                    uuid,
 	}
 
 	// 渲染模板
@@ -293,4 +290,3 @@ func boolToLua(b bool) string {
 	}
 	return "false"
 }
-

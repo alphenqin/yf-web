@@ -4,14 +4,14 @@ import "time"
 
 // CaptureConfig 采集配置
 type CaptureConfig struct {
-	Interface      string `json:"interface"`        // 网卡名称，如 eth0
-	IPFIXPort      int    `json:"ipfix_port"`       // IPFIX 输出端口，如 18000
-	IdleTimeout    int    `json:"idle_timeout"`     // 空闲超时（秒）
-	ActiveTimeout  int    `json:"active_timeout"`   // 活跃超时（秒）
-	StatsInterval  int    `json:"stats_interval"`   // 统计输出间隔（秒）
-	EnableAppLabel bool   `json:"enable_applabel"`  // 启用应用识别
-	EnableDPI      bool   `json:"enable_dpi"`       // 启用 DPI
-	MaxPayload     int    `json:"max_payload"`      // 最大载荷字节数
+	Interface      string `json:"interface"`       // 网卡名称，如 eth0
+	IPFIXPort      int    `json:"ipfix_port"`      // IPFIX 输出端口，如 18000
+	IdleTimeout    int    `json:"idle_timeout"`    // 空闲超时（秒）
+	ActiveTimeout  int    `json:"active_timeout"`  // 活跃超时（秒）
+	StatsInterval  int    `json:"stats_interval"`  // 统计输出间隔（秒）
+	EnableAppLabel bool   `json:"enable_applabel"` // 启用应用识别
+	EnableDPI      bool   `json:"enable_dpi"`      // 启用 DPI
+	MaxPayload     int    `json:"max_payload"`     // 最大载荷字节数
 }
 
 // FilterConfig 过滤配置
@@ -28,11 +28,19 @@ type OutputConfig struct {
 	Fields []string `json:"fields"`
 }
 
+// StatusReportConfig 状态上报配置
+type StatusReportConfig struct {
+	StatusReportURL         string `json:"status_report_url"`          // 状态上报 URL，例如 "http://example.com/api/uploadStatus"
+	StatusReportIntervalSec int    `json:"status_report_interval_sec"` // 状态上报间隔（秒），默认 60
+	UUID                    string `json:"uuid"`                       // 容器主机名，如果为空则从环境变量 HOSTNAME 获取
+}
+
 // YafConfig YAF 完整配置
 type YafConfig struct {
-	Capture CaptureConfig `json:"capture"`
-	Filter  FilterConfig  `json:"filter"`
-	Output  OutputConfig  `json:"output"`
+	Capture      CaptureConfig      `json:"capture"`
+	Filter       FilterConfig       `json:"filter"`
+	Output       OutputConfig       `json:"output"`
+	StatusReport StatusReportConfig `json:"status_report"`
 }
 
 // ConfigScope 配置作用范围
@@ -124,6 +132,10 @@ func DefaultConfig() *YafConfig {
 				"silkAppLabel",
 			},
 		},
+		StatusReport: StatusReportConfig{
+			StatusReportURL:         "",
+			StatusReportIntervalSec: 60,
+			UUID:                    "",
+		},
 	}
 }
-

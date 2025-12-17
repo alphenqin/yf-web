@@ -104,7 +104,7 @@ func initLogger() *zap.Logger {
 func loadConfig() {
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
-	viper.AddConfigPath(".")
+	viper.AddConfigPath(".") // 当前目录
 	viper.AddConfigPath("/etc/yaf-config-service/")
 
 	// 默认配置
@@ -140,4 +140,3 @@ func ginLogger(logger *zap.Logger) gin.HandlerFunc {
 		)
 	}
 }
-

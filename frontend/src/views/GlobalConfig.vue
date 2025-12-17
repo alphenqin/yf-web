@@ -54,22 +54,43 @@ const loadConfig = async () => {
   loading.value = true
   try {
     const res = await getGlobalConfig()
-    if (res.data) {
+    if (res.data && res.data.config) {
+      // 数据库中有配置
       configData.value = res.data.config
       currentConfig.value = res.data.config
       currentVersion.value = res.data.version
       currentUpdatedAt.value = res.data.created_at
       currentCreatedBy.value = res.data.created_by
     } else {
-      // 没有配置，使用默认配置
-      const defaultRes = await getDefaultConfig()
-      configData.value = defaultRes.data
+      // 数据库中没有配置，使用默认配置
+      try {
+        const defaultRes = await getDefaultConfig()
+        if (defaultRes.data) {
+          configData.value = defaultRes.data
+        } else {
+          // 如果默认配置也为空，使用空对象（ConfigForm 会处理默认值）
+          configData.value = {}
+        }
+      } catch (defaultError) {
+        console.warn('获取默认配置失败，使用空配置:', defaultError)
+        // 使用空对象，ConfigForm 组件会提供默认值
+        configData.value = {}
+      }
     }
   } catch (error) {
     ElMessage.error('加载配置失败: ' + error.message)
-    // 使用默认配置
-    const defaultRes = await getDefaultConfig()
-    configData.value = defaultRes.data
+    // 尝试获取默认配置
+    try {
+      const defaultRes = await getDefaultConfig()
+      if (defaultRes.data) {
+        configData.value = defaultRes.data
+      } else {
+        configData.value = {}
+      }
+    } catch (defaultError) {
+      console.warn('获取默认配置失败，使用空配置:', defaultError)
+      configData.value = {}
+    }
   } finally {
     loading.value = false
   }

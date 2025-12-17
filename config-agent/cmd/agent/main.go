@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -29,11 +28,6 @@ func main() {
 	configPath := getEnv("YAF_CONFIG_PATH", "/etc/yaf/yaf.init")
 	interface_ := getEnv("YAF_INTERFACE", "eth0")
 	ipfixPort := getEnv("SM_LISTEN_PORT", "18000")
-	ftpHost := getEnv("FTP_HOST", "")
-	ftpPort, _ := strconv.Atoi(getEnv("FTP_PORT", "21"))
-	ftpUser := getEnv("FTP_USER", "")
-	ftpPass := getEnv("FTP_PASS", "")
-	ftpDir := getEnv("FTP_DIR", "/")
 
 	logger.Info("configuration",
 		zap.String("zk_servers", zkServers),
@@ -54,7 +48,6 @@ func main() {
 	// 创建模板生成器
 	generator, err := template.NewGenerator(
 		configPath, interface_, ipfixPort,
-		ftpHost, ftpPort, ftpUser, ftpPass, ftpDir,
 		cluster, nodeID,
 		logger,
 	)
@@ -65,7 +58,7 @@ func main() {
 	// 配置变更回调
 	onConfigChange := func(cfg *config.YafConfig) error {
 		logger.Info("applying new configuration",
-			zap.Int("time_window_ms", cfg.Capture.TimeWindowMs),
+			zap.String("interface", cfg.Capture.Interface),
 			zap.Bool("applabel", cfg.Capture.EnableAppLabel),
 			zap.Int("output_fields", len(cfg.Output.Fields)),
 		)
@@ -76,7 +69,7 @@ func main() {
 			return err
 		}
 
-		// 重启 YAF 和 Pipeline（pipeline 包含 super_mediator + flow2ftp）
+		// 重启 YAF 和 Pipeline（pipeline 包含 super_mediator + processor）
 		if err := superCtrl.RestartAll(); err != nil {
 			logger.Error("failed to restart processes", zap.Error(err))
 			// 不返回错误，配置已写入
@@ -123,4 +116,3 @@ func getEnv(key, defaultValue string) string {
 	}
 	return defaultValue
 }
-
