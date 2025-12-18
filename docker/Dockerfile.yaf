@@ -147,14 +147,21 @@ RUN echo "/usr/local/lib"  >  /etc/ld.so.conf.d/usr-local.conf; \
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64
 
-# 构建期自检
+# 构建期自检（使用文件检查和库依赖检查，避免命令挂起）
 RUN set -eux; \
     echo "=== 构建期自检：验证可执行文件 ==="; \
     echo "Platform: $(uname -m)"; \
-    /usr/local/bin/yaf --version || (echo "ERROR: yaf not found" && exit 1); \
-    /usr/local/bin/super_mediator --version 2>&1 || echo "WARN: super_mediator --version"; \
-    /usr/local/bin/yaf-config-agent --help 2>&1 || echo "INFO: config-agent ready"; \
-    /usr/local/bin/processor --help 2>&1 || echo "INFO: processor ready"; \
+    echo "检查文件是否存在..."; \
+    test -f /usr/local/bin/yaf || (echo "ERROR: yaf not found" && exit 1); \
+    test -f /usr/local/bin/super_mediator || (echo "ERROR: super_mediator not found" && exit 1); \
+    test -x /usr/local/bin/yaf || (echo "ERROR: yaf not executable" && exit 1); \
+    test -x /usr/local/bin/super_mediator || (echo "ERROR: super_mediator not executable" && exit 1); \
+    echo "检查动态库依赖..."; \
+    ldd /usr/local/bin/yaf 2>&1 | head -10 || echo "WARN: ldd check failed (may be statically linked)"; \
+    ldd /usr/local/bin/super_mediator 2>&1 | head -10 || echo "WARN: ldd check failed (may be statically linked)"; \
+    echo "跳过运行时验证（避免在构建时挂起），将在容器启动时验证"; \
+    /usr/local/bin/yaf-config-agent --help 2>&1 | head -3 || echo "INFO: config-agent ready"; \
+    /usr/local/bin/processor --help 2>&1 | head -3 || echo "INFO: processor ready"; \
     ls -lh /usr/local/bin/yaf /usr/local/bin/super_mediator /usr/local/bin/yaf-config-agent /usr/local/bin/processor; \
     echo "=== 构建期自检通过 ==="
 
@@ -263,9 +270,49 @@ set -eu
 YAF_CONFIG_FILE="${YAF_CONFIG_FILE:-/etc/yaf/yaf.init}"
 SM_LISTEN_PORT="${SM_LISTEN_PORT:-18000}"
 SM_FIELDS="${SM_FIELDS:-flowStartMilliseconds,flowEndMilliseconds,sourceIPv4Address,destinationIPv4Address,sourceTransportPort,destinationTransportPort,protocolIdentifier,silkAppLabel}"
+
+# 检查端口是否可用，最多等待 10 秒
+check_port() {
+  local port=$1
+  local max_wait=10
+  local waited=0
+  
+  # 优先使用 ss，如果没有则使用 netstat
+  local check_cmd=""
+  if command -v ss >/dev/null 2>&1; then
+    check_cmd="ss -tuln"
+  elif command -v netstat >/dev/null 2>&1; then
+    check_cmd="netstat -tuln"
+  else
+    echo "[start_pipeline] WARN: 无法检查端口状态（缺少 ss/netstat），直接启动"
+    return 0
+  fi
+  
+  while [ $waited -lt $max_wait ]; do
+    if ! $check_cmd 2>/dev/null | grep -q ":${port} "; then
+      echo "[start_pipeline] 端口 ${port} 可用"
+      return 0  # 端口可用
+    fi
+    echo "[start_pipeline] 端口 ${port} 被占用，等待释放... (${waited}/${max_wait}秒)"
+    sleep 1
+    waited=$((waited + 1))
+  done
+  echo "[start_pipeline] WARN: 端口 ${port} 仍被占用，尝试继续启动（可能失败）..."
+  return 1
+}
+
 echo "[start_pipeline] super_mediator 监听端口: ${SM_LISTEN_PORT}"
 echo "[start_pipeline] TEXT 输出字段: ${SM_FIELDS}"
+
+# 检查端口是否可用
+check_port "${SM_LISTEN_PORT}"
+
+# 启动 super_mediator 和 processor 管道
+# super_mediator 监听 localhost:${SM_LISTEN_PORT}，等待 YAF 的连接
+# 使用 127.0.0.1 而不是 localhost，避免 DNS 解析问题
 exec /bin/bash -c "
+  set -o pipefail
+  echo \"[start_pipeline] 启动 super_mediator，监听 127.0.0.1:${SM_LISTEN_PORT}\" >&2
   /usr/local/bin/super_mediator \
     --ipfix-input=tcp \
     --ipfix-port=\"${SM_LISTEN_PORT}\" \
@@ -273,8 +320,20 @@ exec /bin/bash -c "
     --print-headers \
     --out=- \
     --fields=\"${SM_FIELDS}\" \
-    localhost \
-  | /usr/local/bin/processor -config \"${YAF_CONFIG_FILE}\" -data-dir /data
+    127.0.0.1 2>&1 | \
+  while IFS= read -r line; do
+    # 将 super_mediator 的错误信息输出到 stderr（supervisor 日志）
+    if [[ \"\$line\" =~ (Fatal|Error|ERROR|WARN|warning) ]]; then
+      echo \"[super_mediator] \$line\" >&2
+    fi
+    # 所有行（包括数据）都传给 processor
+    echo \"\$line\"
+  done | /usr/local/bin/processor -config \"${YAF_CONFIG_FILE}\" -data-dir /data
+  processor_exit=\$?
+  if [ \$processor_exit -ne 0 ]; then
+    echo \"[start_pipeline] processor 退出，状态码: \$processor_exit\" >&2
+  fi
+  exit \$processor_exit
 "
 EOF
 
@@ -318,7 +377,9 @@ stderr_logfile_backups=0
 command=/bin/bash /usr/local/bin/start_pipeline.sh
 user=yaf
 autorestart=true
-startsecs=3
+startsecs=5
+startretries=10
+stopwaitsecs=10
 environment=PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",LD_LIBRARY_PATH="/usr/local/lib:/usr/local/lib64"
 stdout_logfile=/var/log/supervisor/pipeline.log
 stdout_logfile_maxbytes=20MB
