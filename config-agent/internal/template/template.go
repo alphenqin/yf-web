@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/yf-web/config-agent/internal/config"
 	"go.uber.org/zap"
@@ -185,9 +186,12 @@ func (g *Generator) Generate(cfg *config.YafConfig) error {
 	}
 	uuid := cfg.StatusReport.UUID
 
+	// 生成时间戳
+	generatedAt := time.Now().Format("2006-01-02 15:04:05")
+
 	// 准备模板数据
 	data := TemplateData{
-		GeneratedAt:             "auto-generated",
+		GeneratedAt:             generatedAt,
 		Cluster:                 g.cluster,
 		NodeID:                  g.nodeID,
 		Interface:               iface,
@@ -204,6 +208,13 @@ func (g *Generator) Generate(cfg *config.YafConfig) error {
 		StatusReportIntervalSec: statusReportIntervalSec,
 		UUID:                    uuid,
 	}
+
+	g.logger.Info("[CONFIG_GENERATE] 开始生成配置文件",
+		zap.String("config_path", g.configPath),
+		zap.String("generated_at", generatedAt),
+		zap.String("cluster", g.cluster),
+		zap.String("node_id", g.nodeID),
+	)
 
 	// 渲染模板
 	var buf bytes.Buffer
@@ -228,7 +239,14 @@ func (g *Generator) Generate(cfg *config.YafConfig) error {
 		return fmt.Errorf("failed to rename config file: %w", err)
 	}
 
-	g.logger.Info("config file generated", zap.String("path", g.configPath))
+	g.logger.Info("[CONFIG_GENERATE] 配置文件生成成功",
+		zap.String("config_path", g.configPath),
+		zap.String("generated_at", generatedAt),
+		zap.String("interface", iface),
+		zap.Int("ipfix_port", ipfixPort),
+		zap.String("bpf_filter", data.BPFFilter),
+		zap.Int("output_fields_count", len(outputFields)),
+	)
 	return nil
 }
 

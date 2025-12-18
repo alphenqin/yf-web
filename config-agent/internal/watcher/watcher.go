@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	ConfigBasePath = "/yaf-config"
-	GlobalPath     = "/yaf-config/global/config"
-	ClusterPath    = "/yaf-config/cluster"
+	// 配置路径前缀（需与后端保持一致）
+	ConfigBasePath = "/xnta/yaf-config"
+	GlobalPath     = "/xnta/yaf-config/global/config"
+	ClusterPath    = "/xnta/yaf-config/cluster"
 )
 
 // ConfigWatcher ZK 配置监听器
@@ -132,11 +133,29 @@ func (w *ConfigWatcher) watchLoop() {
 		case <-w.stopCh:
 			return
 		case event := <-globalCh:
-			w.logger.Info("global config changed", zap.String("type", event.Type.String()))
+			w.logger.Info("[CONFIG_CHANGE] 检测到全局配置变更",
+				zap.String("event_type", event.Type.String()),
+				zap.String("event_state", event.State.String()),
+				zap.String("source", "global"),
+				zap.String("path", globalPath),
+			)
 		case event := <-clusterCh:
-			w.logger.Info("cluster config changed", zap.String("type", event.Type.String()))
+			w.logger.Info("[CONFIG_CHANGE] 检测到集群配置变更",
+				zap.String("event_type", event.Type.String()),
+				zap.String("event_state", event.State.String()),
+				zap.String("source", "cluster"),
+				zap.String("cluster", w.cluster),
+				zap.String("path", clusterPath),
+			)
 		case event := <-nodeCh:
-			w.logger.Info("node config changed", zap.String("type", event.Type.String()))
+			w.logger.Info("[CONFIG_CHANGE] 检测到节点配置变更",
+				zap.String("event_type", event.Type.String()),
+				zap.String("event_state", event.State.String()),
+				zap.String("source", "node"),
+				zap.String("cluster", w.cluster),
+				zap.String("node_id", w.nodeID),
+				zap.String("path", nodePath),
+			)
 		case <-time.After(30 * time.Second):
 			// 定期刷新 watch（防止 session 过期）
 			continue
@@ -154,6 +173,12 @@ func (w *ConfigWatcher) loadAndApplyConfig() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	startTime := time.Now()
+	w.logger.Info("[CONFIG_LOAD] 开始加载配置",
+		zap.String("cluster", w.cluster),
+		zap.String("node_id", w.nodeID),
+	)
+
 	// 加载各级配置
 	globalCfg := w.loadConfig(GlobalPath)
 	clusterPath := fmt.Sprintf("%s/%s/config", ClusterPath, w.cluster)
@@ -167,25 +192,45 @@ func (w *ConfigWatcher) loadAndApplyConfig() error {
 	merged = config.MergeConfig(merged, clusterCfg)
 	merged = config.MergeConfig(merged, nodeCfg)
 
-	w.logger.Info("config merged",
+	w.logger.Info("[CONFIG_LOAD] 配置加载完成",
 		zap.Bool("has_global", globalCfg != nil),
 		zap.Bool("has_cluster", clusterCfg != nil),
 		zap.Bool("has_node", nodeCfg != nil),
+		zap.String("interface", merged.Capture.Interface),
+		zap.Int("ipfix_port", merged.Capture.IPFIXPort),
+		zap.Bool("enable_applabel", merged.Capture.EnableAppLabel),
+		zap.Int("output_fields_count", len(merged.Output.Fields)),
+		zap.Duration("load_duration", time.Since(startTime)),
 	)
 
 	// 检查配置是否变化
 	if w.configEqual(w.lastConfig, merged) {
-		w.logger.Debug("config unchanged, skip apply")
+		w.logger.Info("[CONFIG_LOAD] 配置未变化，跳过应用",
+			zap.Duration("check_duration", time.Since(startTime)),
+		)
 		return nil
 	}
+
+	w.logger.Info("[CONFIG_LOAD] 检测到配置变化，准备应用新配置",
+		zap.Duration("check_duration", time.Since(startTime)),
+	)
 
 	w.lastConfig = merged
 
 	// 调用回调应用配置
+	applyStartTime := time.Now()
 	if w.onChange != nil {
 		if err := w.onChange(merged); err != nil {
+			w.logger.Error("[CONFIG_APPLY] 配置应用失败",
+				zap.Error(err),
+				zap.Duration("apply_duration", time.Since(applyStartTime)),
+			)
 			return fmt.Errorf("failed to apply config: %w", err)
 		}
+		w.logger.Info("[CONFIG_APPLY] 配置应用成功",
+			zap.Duration("apply_duration", time.Since(applyStartTime)),
+			zap.Duration("total_duration", time.Since(startTime)),
+		)
 	}
 
 	return nil

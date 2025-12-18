@@ -1,27 +1,15 @@
 # ================================
-# YAF 容器 Dockerfile (集成 Config Agent + processor)
-# ================================
-# 支持多平台构建：linux/amd64, linux/arm64
-#
-# 构建方式:
-#   单平台构建:
-#     docker build -f docker/Dockerfile.yaf -t yaf-with-agent:1.0 .
-#
-#   多平台构建:
-#     docker buildx build --platform linux/amd64,linux/arm64 \
-#       -f docker/Dockerfile.yaf -t yaf-with-agent:1.0 --push .
+# YAF 容器 Dockerfile 
 # ================================
 
 # ================================
-# 1. Go 编译阶段：编译 config-agent 和 processor
+# 1. Go 编译阶段
 # ================================
 FROM --platform=$BUILDPLATFORM golang:1.21-alpine AS go-builder
 
-# 多平台参数（Docker BuildKit 自动提供）
 ARG TARGETOS
 ARG TARGETARCH
 ARG BUILDPLATFORM
-ARG TARGETPLATFORM
 
 WORKDIR /build
 
@@ -30,10 +18,7 @@ WORKDIR /build/config-agent
 COPY config-agent/go.mod config-agent/go.sum ./
 RUN go mod download
 COPY config-agent/ ./
-
-# 交叉编译 config-agent
 RUN set -eux; \
-    echo "Building config-agent for ${TARGETOS}/${TARGETARCH} (build platform: ${BUILDPLATFORM})"; \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -ldflags="-w -s" -o /build/yaf-config-agent ./cmd/agent && \
     chmod +x /build/yaf-config-agent
@@ -43,71 +28,56 @@ WORKDIR /build/yaf-processor
 COPY yaf-processor/go.mod yaf-processor/go.sum ./
 RUN go mod download
 COPY yaf-processor/ ./
-
-# 交叉编译 processor
 RUN set -eux; \
-    echo "Building processor for ${TARGETOS}/${TARGETARCH} (build platform: ${BUILDPLATFORM})"; \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -ldflags="-w -s" -o /build/processor ./cmd/processor && \
     chmod +x /build/processor
 
 # ================================
-# 2. 构建阶段：编译 libfixbuf / YAF / super_mediator
+# 2. 构建阶段
 # ================================
 FROM debian:bookworm-slim AS builder
 
-ARG TARGETPLATFORM
-ARG BUILDPLATFORM
 ARG APT_PROXY
-
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
-
 ARG FIXBUF_VERSION=3.0.0.alpha2
 ARG YAF_VERSION=3.0.0.alpha4
 ARG SM_VERSION=2.0.0.alpha3
 
-# 安装编译依赖
-# 直接使用阿里云镜像（网络环境问题，官方源不稳定）
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+
+# 使用阿里云镜像
 RUN set -eux; \
     rm -f /etc/apt/sources.list.d/debian.sources || true; \
     echo "deb http://mirrors.aliyun.com/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list; \
     echo "deb http://mirrors.aliyun.com/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list; \
     echo "deb http://mirrors.aliyun.com/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list; \
-    apt-get update || (echo "ERROR: apt-get update failed" && exit 1); \
-    apt-get install -y --no-install-recommends \
+    apt-get update && apt-get install -y --no-install-recommends \
         build-essential pkg-config wget curl ca-certificates \
-        libglib2.0-dev libpcap-dev libpcre3-dev zlib1g-dev libssl-dev liblua5.3-dev || \
-        (echo "ERROR: apt-get install failed" && exit 1); \
-    rm -rf /var/lib/apt/lists/*; \
-    # 验证关键工具是否安装成功
-    command -v curl >/dev/null 2>&1 || (echo "ERROR: curl not installed" && exit 1); \
-    command -v wget >/dev/null 2>&1 || (echo "ERROR: wget not installed" && exit 1)
+        libglib2.0-dev libpcap-dev libpcre3-dev zlib1g-dev libssl-dev liblua5.3-dev; \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /tmp
 
-# libfixbuf
+# 编译 libfixbuf
 RUN HTTP_PROXY=${APT_PROXY} HTTPS_PROXY=${APT_PROXY} \
     curl -fSL "https://tools.netsa.cert.org/releases/libfixbuf-${FIXBUF_VERSION}.tar.gz" -o libfixbuf.tar.gz && \
-    tar xzf libfixbuf.tar.gz && \
-    cd "libfixbuf-${FIXBUF_VERSION}" && \
+    tar xzf libfixbuf.tar.gz && cd "libfixbuf-${FIXBUF_VERSION}" && \
     ./configure --disable-tools && make -j"$(nproc)" && make install && ldconfig && \
     cd /tmp && rm -rf "libfixbuf-${FIXBUF_VERSION}" libfixbuf.tar.gz
 
-# YAF
+# 编译 YAF
 RUN HTTP_PROXY=${APT_PROXY} HTTPS_PROXY=${APT_PROXY} \
     curl -fSL "https://tools.netsa.cert.org/releases/yaf-${YAF_VERSION}.tar.gz" -o yaf.tar.gz && \
-    tar xzf yaf.tar.gz && \
-    cd "yaf-${YAF_VERSION}" && \
+    tar xzf yaf.tar.gz && cd "yaf-${YAF_VERSION}" && \
     ./configure --enable-applabel --enable-dpi && \
     make -j"$(nproc)" && make install && ldconfig && \
     cd /tmp && rm -rf "yaf-${YAF_VERSION}" yaf.tar.gz
 
-# super_mediator
+# 编译 super_mediator
 RUN HTTP_PROXY=${APT_PROXY} HTTPS_PROXY=${APT_PROXY} \
     curl -fSL "https://tools.netsa.cert.org/releases/super_mediator-${SM_VERSION}.tar.gz" -o sm.tar.gz && \
-    tar xzf sm.tar.gz && \
-    cd "super_mediator-${SM_VERSION}" && \
+    tar xzf sm.tar.gz && cd "super_mediator-${SM_VERSION}" && \
     ./configure --with-mysql=no && \
     make -j"$(nproc)" && make install && ldconfig && \
     cd /tmp && rm -rf "super_mediator-${SM_VERSION}" sm.tar.gz
@@ -118,298 +88,311 @@ RUN HTTP_PROXY=${APT_PROXY} HTTPS_PROXY=${APT_PROXY} \
 FROM debian:bookworm-slim AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Shanghai
 
-# 直接使用阿里云镜像（网络环境问题，官方源不稳定）
+# 安装运行时依赖
 RUN set -eux; \
     rm -f /etc/apt/sources.list.d/debian.sources || true; \
     echo "deb http://mirrors.aliyun.com/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list; \
     echo "deb http://mirrors.aliyun.com/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list; \
     echo "deb http://mirrors.aliyun.com/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list; \
-    apt-get update || (echo "ERROR: apt-get update failed" && exit 1); \
-    apt-get install -y --no-install-recommends \
+    apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates libglib2.0-0 libpcap0.8 libpcre3 zlib1g libssl3 liblua5.3-0 \
         bash procps tcpdump netcat-traditional iproute2 net-tools dnsutils psmisc vim-tiny less \
-        lsof supervisor tzdata || \
-        (echo "ERROR: apt-get install failed" && exit 1); \
-    ln -fs /usr/share/zoneinfo/Asia/Shanghai /etc/localtime; \
-    echo "Asia/Shanghai" > /etc/timezone; dpkg-reconfigure -f noninteractive tzdata; \
+        lsof supervisor tzdata && \
+    ln -fs /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
+    echo "Asia/Shanghai" > /etc/timezone && dpkg-reconfigure -f noninteractive tzdata && \
     rm -rf /var/lib/apt/lists/*
 
-ENV TZ=Asia/Shanghai
-
-# 复制编译好的库和可执行文件
+# 复制文件
 COPY --from=builder /usr/local/ /usr/local/
-
-# 复制 config-agent（已交叉编译为目标平台）
 COPY --from=go-builder /build/yaf-config-agent /usr/local/bin/yaf-config-agent
-RUN chmod +x /usr/local/bin/yaf-config-agent
-
-# 复制 processor（已交叉编译为目标平台）
 COPY --from=go-builder /build/processor /usr/local/bin/processor
-RUN chmod +x /usr/local/bin/processor
 
-RUN echo "/usr/local/lib"  >  /etc/ld.so.conf.d/usr-local.conf; \
-    echo "/usr/local/lib64" >> /etc/ld.so.conf.d/usr-local.conf; \
+# 配置库路径
+RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/usr-local.conf && \
+    echo "/usr/local/lib64" >> /etc/ld.so.conf.d/usr-local.conf && \
     ldconfig
-
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64
 
-# 构建期自检（使用文件检查和库依赖检查，避免命令挂起）
-RUN set -eux; \
-    echo "=== 构建期自检：验证可执行文件 ==="; \
-    echo "Platform: $(uname -m)"; \
-    echo "检查文件是否存在..."; \
-    test -f /usr/local/bin/yaf || (echo "ERROR: yaf not found" && exit 1); \
-    test -f /usr/local/bin/super_mediator || (echo "ERROR: super_mediator not found" && exit 1); \
-    test -x /usr/local/bin/yaf || (echo "ERROR: yaf not executable" && exit 1); \
-    test -x /usr/local/bin/super_mediator || (echo "ERROR: super_mediator not executable" && exit 1); \
-    echo "检查动态库依赖..."; \
-    ldd /usr/local/bin/yaf 2>&1 | head -10 || echo "WARN: ldd check failed (may be statically linked)"; \
-    ldd /usr/local/bin/super_mediator 2>&1 | head -10 || echo "WARN: ldd check failed (may be statically linked)"; \
-    echo "跳过运行时验证（避免在构建时挂起），将在容器启动时验证"; \
-    /usr/local/bin/yaf-config-agent --help 2>&1 | head -3 || echo "INFO: config-agent ready"; \
-    /usr/local/bin/processor --help 2>&1 | head -3 || echo "INFO: processor ready"; \
-    ls -lh /usr/local/bin/yaf /usr/local/bin/super_mediator /usr/local/bin/yaf-config-agent /usr/local/bin/processor; \
-    echo "=== 构建期自检通过 ==="
-
-# 创建非 root 用户
-RUN set -eux; \
-    groupadd -r yaf && \
-    useradd -r -g yaf -d /var/lib/yaf -s /usr/sbin/nologin yaf; \
-    mkdir -p /var/lib/yaf
-
-# 创建目录
-RUN set -eux; \
-    mkdir -p /data /etc/yaf /var/log/supervisor /var/run/supervisor /opt/yaf; \
-    chown -R yaf:yaf /data /var/log/supervisor /var/run/supervisor /opt/yaf; \
-    chown -R root:root /etc/yaf; \
+# 创建用户和目录
+RUN groupadd -r yaf && \
+    useradd -r -g yaf -d /var/lib/yaf -s /usr/sbin/nologin yaf && \
+    mkdir -p /data /etc/yaf /var/log/supervisor /var/run/supervisor /opt/yaf && \
+    chown -R yaf:yaf /data /var/log/supervisor /var/run/supervisor /opt/yaf && \
+    chown -R root:root /etc/yaf && \
     chmod 755 /var/run/supervisor
 
-# 默认配置文件
+# YAF 配置文件
 RUN cat >/opt/yaf/yaf.init <<'EOF'
 -- ========= YAF 基础配置 =========
-
--- 从网卡抓包（容器内网卡名，常见为 eth0，按需修改）
 input = {
   type = "pcap",
   inf  = "eth0",
   export_interface = true,
 }
-
--- 输出 IPFIX 到本机 18000/tcp（super_mediator 在这个端口收）
 output = {
   host     = "127.0.0.1",
   port     = "18000",
   protocol = "tcp",
 }
-
--- 解码选项（按需改）
 decode = {
   ip4_only = false,
   ip6_only = false,
   nofrag   = false,
 }
-
--- 导出选项（适配 SiLK / super_mediator）
 export = {
   silk       = true,
   uniflow    = true,
   flow_stats = true,
   mac        = true,
 }
-
--- 流超时（单位：秒）
-idle_timeout   = 60    -- 空闲 300s 关闭流
-active_timeout = 60   -- 活跃 30min 切新流
-
--- BPF 过滤器（示例：采集所有 IP，排除 ssh）
+idle_timeout   = 60
+active_timeout = 60
 filter = "ip and not port 22"
-
--- 应用识别 / DPI
 applabel   = true
 dpi        = false
-maxpayload = 1024       -- 每方向最多采 1024 字节 payload
+maxpayload = 1024
 maxexport  = maxpayload
 udp_payload = true
-stats       = 300       -- 每 300s 输出一次统计记录
-
--- ========= processor 扩展配置 =========
--- YAF 不会使用此块，processor 会从这里读取配置
-
-processor = {
-  -- 本地滚动文件策略
-  rotate_interval_sec = 60,  -- 每 60s 强制切新文件
-  rotate_size_mb      = 100,  -- 单文件最大 100 MiB
-  file_prefix         = "flows_",  -- flows_YYYYMMDD_HHMMSS_xxx.csv.gz
-
-  -- 输出类型（file/kafka/mq等，未来扩展）
-  output_type = "file",
-
-  -- 时区（默认东八区，显式指定方便对齐本地时间）
-  timezone = "Asia/Shanghai",
-
-  -- 状态上报配置（可选）
-  -- status_report_url = "http://example.com/api/uploadStatus",
-  -- status_report_interval_sec = 60,
-  -- uuid = "container-hostname",
-}
+stats       = 300
 EOF
 
 RUN ln -sf /opt/yaf/yaf.init /etc/yaf/yaf.init && \
     chown -R yaf:yaf /opt/yaf
 
-# 启动脚本
+# === YAF 启动脚本：等待 super_mediator 监听后再启动 ===
 RUN cat >/usr/local/bin/start_yaf.sh <<'EOF'
 #!/usr/bin/env bash
 set -eu
+
 YAF_CONFIG_FILE="${YAF_CONFIG_FILE:-/etc/yaf/yaf.init}"
-echo "[start_yaf] 使用 YAF 配置文件: ${YAF_CONFIG_FILE}"
+SM_HOST="${SM_HOST:-127.0.0.1}"
+SM_PORT="${SM_LISTEN_PORT:-18000}"
+
+log() { echo "[$(date '+%F %T')] [YAF] $*" >&2; }
+
+# 检查配置文件
 if [ ! -f "${YAF_CONFIG_FILE}" ]; then
-  echo "[start_yaf] ERROR: 未找到 ${YAF_CONFIG_FILE}" >&2
+  log "ERROR: Config file not found: ${YAF_CONFIG_FILE}"
   exit 1
 fi
+
+# 等待 super_mediator 启动
+log "Waiting for super_mediator ${SM_HOST}:${SM_PORT} to be ready..."
+max_wait=60
+waited=0
+
+while [ $waited -lt $max_wait ]; do
+  if nc -z "${SM_HOST}" "${SM_PORT}" >/dev/null 2>&1; then
+    log "super_mediator is UP and ready"
+    break
+  fi
+  if [ $((waited % 10)) -eq 0 ] && [ $waited -gt 0 ]; then
+    log "Still waiting... (${waited}/${max_wait}s)"
+  fi
+  sleep 1
+  waited=$((waited + 1))
+done
+
+if [ $waited -ge $max_wait ]; then
+  log "WARN: super_mediator not ready after ${max_wait}s, starting YAF anyway"
+fi
+
+log "Starting YAF with config: ${YAF_CONFIG_FILE}"
 exec /usr/local/bin/yaf --config "${YAF_CONFIG_FILE}" "$@"
 EOF
 
+# === Pipeline 启动脚本：优化端口检查和清理逻辑 ===
 RUN cat >/usr/local/bin/start_pipeline.sh <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-YAF_CONFIG_FILE="${YAF_CONFIG_FILE:-/etc/yaf/yaf.init}"
-SM_LISTEN_PORT="${SM_LISTEN_PORT:-18000}"
-SM_FIELDS="${SM_FIELDS:-flowStartMilliseconds,flowEndMilliseconds,sourceIPv4Address,destinationIPv4Address,sourceTransportPort,destinationTransportPort,protocolIdentifier,silkAppLabel}"
+SM_PORT="${SM_LISTEN_PORT:-18000}"
+YAF_CONFIG="${YAF_CONFIG_FILE:-/etc/yaf/yaf.init}"
+FIELDS="${SM_FIELDS:-flowStartMilliseconds,flowEndMilliseconds,sourceIPv4Address,destinationIPv4Address,sourceTransportPort,destinationTransportPort,protocolIdentifier,silkAppLabel}"
 
-# 清理占用端口的进程
-kill_port_process() {
+log() { echo "[$(date '+%F %T')] [PIPELINE] $*" >&2; }
+
+# 检查端口是否处于 LISTEN 状态
+is_port_listening() {
   local port=$1
-  local pid=""
+  ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port}$"
+}
+
+# 清理残留进程
+cleanup_leftover_processes() {
+  local cleaned=0
   
-  # 使用 ss 或 netstat 查找占用端口的进程
-  if command -v ss >/dev/null 2>&1; then
-    pid=$(ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' | head -1)
-  elif command -v netstat >/dev/null 2>&1; then
-    pid=$(netstat -tlnp 2>/dev/null | grep ":${port} " | grep -oP '[0-9]+/[^ ]+' | cut -d'/' -f1 | head -1)
-  elif command -v lsof >/dev/null 2>&1; then
-    pid=$(lsof -ti:${port} 2>/dev/null | head -1)
-  fi
-  
-  if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
-    echo "[start_pipeline] 发现进程 ${pid} 占用端口 ${port}，尝试终止..." >&2
-    kill -TERM "$pid" 2>/dev/null || true
-    sleep 1
-    # 如果还没死，强制杀死
-    if kill -0 "$pid" 2>/dev/null; then
-      echo "[start_pipeline] 强制终止进程 ${pid}..." >&2
-      kill -KILL "$pid" 2>/dev/null || true
+  # 清理 super_mediator 进程
+  if command -v pgrep >/dev/null 2>&1; then
+    local pids=$(pgrep -f "super_mediator" 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+      log "Found leftover super_mediator processes: $pids, killing..."
+      echo "$pids" | xargs -r kill -TERM 2>/dev/null || true
+      sleep 2
+      local pids_alive=$(pgrep -f "super_mediator" 2>/dev/null || true)
+      if [ -n "$pids_alive" ]; then
+        log "Force killing remaining processes: $pids_alive"
+        echo "$pids_alive" | xargs -r kill -KILL 2>/dev/null || true
+        sleep 1
+      fi
+      cleaned=1
     fi
-    return 0
   fi
-  return 1
+  
+  # 清理 processor 进程
+  if command -v pgrep >/dev/null 2>&1; then
+    local pids=$(pgrep -f "processor.*-config.*${YAF_CONFIG}" 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+      log "Found leftover processor processes: $pids, killing..."
+      echo "$pids" | xargs -r kill -TERM 2>/dev/null || true
+      sleep 1
+      local pids_alive=$(pgrep -f "processor.*-config.*${YAF_CONFIG}" 2>/dev/null || true)
+      if [ -n "$pids_alive" ]; then
+        log "Force killing remaining processor processes: $pids_alive"
+        echo "$pids_alive" | xargs -r kill -KILL 2>/dev/null || true
+        sleep 1
+      fi
+      cleaned=1
+    fi
+  fi
+  
+  return $cleaned
 }
 
-# 退出时清理子进程，避免残留占用端口
-cleanup() {
-  echo "[start_pipeline] 收到退出信号，清理子进程..." >&2
-  # 清理所有子进程
-  pkill -P $$ 2>/dev/null || true
-  # 清理可能占用端口的进程
-  kill_port_process "${SM_LISTEN_PORT}" || true
-  # 等待子进程退出
-  wait 2>/dev/null || true
-}
-trap cleanup TERM INT EXIT
-
-# 检查端口是否可用，最多等待 10 秒
-check_port() {
+# 等待端口释放（只检查 LISTEN 状态，忽略 TIME_WAIT）
+wait_for_port_release() {
   local port=$1
-  local max_wait=10
+  local max_wait=${2:-30}
   local waited=0
-
-  local check_cmd=""
-  if command -v ss >/dev/null 2>&1; then
-    check_cmd="ss -tuln"
-  elif command -v netstat >/dev/null 2>&1; then
-    check_cmd="netstat -tuln"
-  else
-    echo "[start_pipeline] WARN: 无法检查端口状态（缺少 ss/netstat），直接启动" >&2
-    return 0
-  fi
-
-  # 如果端口被占用，尝试清理
-  if $check_cmd 2>/dev/null | grep -q ":${port} "; then
-    echo "[start_pipeline] 端口 ${port} 被占用，尝试清理..." >&2
-    kill_port_process "${port}" || true
-    sleep 1
-  fi
-
+  
+  log "Checking port ${port} LISTEN availability..."
+  
   while [ $waited -lt $max_wait ]; do
-    if ! $check_cmd 2>/dev/null | grep -q ":${port} "; then
-      echo "[start_pipeline] 端口 ${port} 可用" >&2
+    if is_port_listening "$port"; then
+      log "Port ${port} is BUSY (LISTEN), waiting... (${waited}/${max_wait}s)"
+      sleep 1
+      waited=$((waited + 1))
+    else
+      log "Port ${port} is FREE (no LISTEN)."
       return 0
     fi
-    echo "[start_pipeline] 端口 ${port} 被占用，等待释放... (${waited}/${max_wait}秒)" >&2
-    # 再次尝试清理
-    if [ $waited -eq 0 ] || [ $((waited % 2)) -eq 0 ]; then
-      kill_port_process "${port}" || true
-    fi
-    sleep 1
-    waited=$((waited + 1))
   done
+  
+  log "WARN: Port ${port} still LISTEN after ${max_wait}s, will try to start anyway"
+  return 0
+}
 
-  echo "[start_pipeline] WARN: 端口 ${port} 仍被占用，尝试继续启动（可能失败）..." >&2
+# 确保端口可用（多次检查，避免竞态）
+ensure_port_available() {
+  local port=$1
+  local retries=0
+  local max_retries=5
+  
+  while [ $retries -lt $max_retries ]; do
+    if is_port_listening "$port"; then
+      log "Port ${port} still LISTEN, waiting 2s... (retry ${retries}/${max_retries})"
+      sleep 2
+      retries=$((retries + 1))
+    else
+      # 额外等待 2 秒，确保 TIME_WAIT 状态完全释放
+      log "Port ${port} is available, waiting 2s for TIME_WAIT to clear..."
+      sleep 2
+      # 再次确认
+      if ! is_port_listening "$port"; then
+        log "Port ${port} confirmed available"
+        return 0
+      else
+        log "Port ${port} became busy again, retrying..."
+        retries=$((retries + 1))
+      fi
+    fi
+  done
+  
+  log "ERROR: Port ${port} still not available after ${max_retries} retries"
   return 1
 }
 
-echo "[start_pipeline] super_mediator 监听端口: ${SM_LISTEN_PORT}" >&2
-echo "[start_pipeline] TEXT 输出字段: ${SM_FIELDS}" >&2
-
-# 检查端口是否可用
-check_port "${SM_LISTEN_PORT}"
-
-echo "[start_pipeline] 启动 super_mediator，监听 127.0.0.1:${SM_LISTEN_PORT}" >&2
-echo "[start_pipeline] 等待 YAF 连接到 127.0.0.1:${SM_LISTEN_PORT}..." >&2
-
-# 启动 super_mediator 和 processor 管道
-# 使用命名管道分离 stdout 和 stderr，确保错误信息可见
-# super_mediator 的 stderr 输出到 stderr（supervisor 会捕获），stdout 传给 processor
-/usr/local/bin/super_mediator \
-  --ipfix-input=tcp \
-  --ipfix-port="${SM_LISTEN_PORT}" \
-  --output-mode=TEXT \
-  --print-headers \
-  --out=- \
-  --fields="${SM_FIELDS}" \
-  127.0.0.1 2>&1 | \
-/usr/local/bin/processor -config "${YAF_CONFIG_FILE}" -data-dir /data
-
-# 获取 processor 的退出状态（管道中最后一个命令的退出状态）
-processor_exit=$?
-
-# 获取 super_mediator 的退出状态
-sm_exit=${PIPESTATUS[0]}
-
-# 记录退出状态
-echo "[start_pipeline] processor 退出状态: ${processor_exit}, super_mediator 退出状态: ${sm_exit}" >&2
-
-# processor 正常退出（EOF）时返回 0，即使 super_mediator 可能也退出了
-# 这是正常的，因为 super_mediator 可能因为某种原因退出，导致 stdin 关闭
-if [ $processor_exit -eq 0 ]; then
-  echo "[start_pipeline] processor 正常退出（EOF），返回 0" >&2
+# 主流程
+main() {
+  # 1. 清理残留进程
+  if cleanup_leftover_processes; then
+    log "Cleaned up leftover processes, waiting for port release..."
+    sleep 2
+  fi
+  
+  # 2. 等待端口释放
+  wait_for_port_release "${SM_PORT}" 30
+  
+  # 3. 确保端口可用
+  if ! ensure_port_available "${SM_PORT}"; then
+    log "ERROR: Cannot start super_mediator, port ${SM_PORT} is not available"
+    exit 1
+  fi
+  
+  # 4. 启动 super_mediator 和 processor
+  log "Starting super_mediator on 127.0.0.1:${SM_PORT}"
+  
+  # 临时禁用 pipefail，以便正确处理管道退出状态
+  set +o pipefail
+  
+  # 启动管道：super_mediator 输出到 processor
+  /usr/local/bin/super_mediator \
+    --ipfix-input=tcp \
+    --ipfix-port="${SM_PORT}" \
+    --output-mode=TEXT \
+    --print-headers \
+    --out=- \
+    --fields="${FIELDS}" \
+    127.0.0.1 2>&1 | \
+  /usr/local/bin/processor -config "${YAF_CONFIG}" -data-dir /data
+  
+  # 获取退出状态
+  local processor_exit=$?
+  local sm_exit=${PIPESTATUS[0]}
+  
+  set -o pipefail
+  
+  # 记录退出状态
+  log "super_mediator exit code: ${sm_exit}, processor exit code: ${processor_exit}"
+  
+  # processor 正常退出（EOF）时返回 0，这是正常的
+  # 只有当 processor 异常退出（非 0）或 super_mediator 异常退出时才返回错误
+  if [ $processor_exit -ne 0 ]; then
+    log "ERROR: processor exited with code $processor_exit"
+    exit $processor_exit
+  fi
+  
+  if [ $sm_exit -ne 0 ]; then
+    log "ERROR: super_mediator exited with code $sm_exit"
+    exit $sm_exit
+  fi
+  
+  # 正常退出（EOF）- 返回 0 让 supervisor 知道这是正常退出
+  # supervisor 配置了 exitcodes=0,1，所以 exit 0 会被视为正常退出
+  log "Pipeline exited normally (EOF), supervisor will restart if needed"
   exit 0
-fi
+}
 
-# processor 异常退出，返回其退出状态
-echo "[start_pipeline] processor 异常退出，返回状态码: ${processor_exit}" >&2
-if [ $sm_exit -ne 0 ]; then
-  echo "[start_pipeline] super_mediator 退出状态: ${sm_exit}" >&2
-fi
-exit $processor_exit
+# 设置退出清理
+cleanup_on_exit() {
+  log "Received exit signal, cleaning up..."
+  cleanup_leftover_processes || true
+}
+trap cleanup_on_exit TERM INT EXIT
+
+# 执行主流程
+main "$@"
 EOF
 
-RUN sed -i 's/\r$//' /usr/local/bin/start_yaf.sh /usr/local/bin/start_pipeline.sh && \
-    chmod +x /usr/local/bin/start_yaf.sh /usr/local/bin/start_pipeline.sh
+RUN chmod +x /usr/local/bin/start_yaf.sh /usr/local/bin/start_pipeline.sh
 
-# supervisor 配置（包含 config-agent）
+# === Supervisord 配置：pipeline 先启动，yaf 后启动 ===
+# 关键优化：
+# 1. pipeline priority=10 最先启动，startsecs=8 确保 super_mediator 监听就绪
+# 2. yaf priority=20，等 pipeline 就绪后再连接
+# 3. config-agent priority=5 最先启动，但它不影响其他进程
 RUN cat >/etc/supervisor/supervisord.conf <<'EOF'
 [unix_http_server]
 file=/var/run/supervisor/supervisor.sock
@@ -419,7 +402,6 @@ chmod=0700
 nodaemon=true
 logfile=/dev/stdout
 logfile_maxbytes=0
-logfile_backups=0
 pidfile=/var/run/supervisor/supervisord.pid
 user=root
 
@@ -429,57 +411,56 @@ supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
 [supervisorctl]
 serverurl=unix:///var/run/supervisor/supervisor.sock
 
-[program:yaf]
-command=/bin/bash /usr/local/bin/start_yaf.sh
+[program:config-agent]
+command=/usr/local/bin/yaf-config-agent
 user=root
+priority=5
 autorestart=true
 startsecs=3
-environment=PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",LD_LIBRARY_PATH="/usr/local/lib:/usr/local/lib64"
-stdout_logfile=/var/log/supervisor/yaf.log
-stdout_logfile_maxbytes=20MB
-stdout_logfile_backups=5
+startretries=10
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
 stderr_logfile=/dev/stdout
 stderr_logfile_maxbytes=0
-stderr_logfile_backups=0
 
 [program:pipeline]
 command=/bin/bash /usr/local/bin/start_pipeline.sh
 user=yaf
+priority=10
 autorestart=true
-startsecs=5
+startsecs=8
 startretries=10
-stopwaitsecs=10
-environment=PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",LD_LIBRARY_PATH="/usr/local/lib:/usr/local/lib64"
+stopwaitsecs=30
+stopasgroup=true
+killasgroup=true
+exitcodes=0
 stdout_logfile=/dev/stdout
 stdout_logfile_maxbytes=0
-stdout_logfile_backups=0
 stderr_logfile=/dev/stdout
 stderr_logfile_maxbytes=0
-stderr_logfile_backups=0
 
-[program:config-agent]
-command=/usr/local/bin/yaf-config-agent
+[program:yaf]
+command=/bin/bash /usr/local/bin/start_yaf.sh
 user=root
+priority=20
 autorestart=true
 startsecs=3
-environment=PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-stdout_logfile=/var/log/supervisor/config-agent.log
+startretries=30
+stopwaitsecs=10
+stdout_logfile=/var/log/supervisor/yaf.log
 stdout_logfile_maxbytes=20MB
-stdout_logfile_backups=5
 stderr_logfile=/dev/stdout
 stderr_logfile_maxbytes=0
-stderr_logfile_backups=0
 EOF
 
 WORKDIR /opt/yaf
-
-# 默认环境变量
-ENV ZK_SERVERS=zookeeper:2181
-ENV YAF_CLUSTER=default
-ENV YAF_NODE_ID=node-1
-ENV YAF_CONFIG_PATH=/etc/yaf/yaf.init
-ENV YAF_INTERFACE=eth0
-ENV SM_LISTEN_PORT=18000
+ENV ZK_SERVERS=zookeeper:2181 \
+    YAF_CLUSTER=default \
+    YAF_NODE_ID=node-1 \
+    YAF_CONFIG_PATH=/etc/yaf/yaf.init \
+    YAF_INTERFACE=eth0 \
+    SM_LISTEN_PORT=18000 \
+    SM_HOST=127.0.0.1
 
 ENTRYPOINT ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]
 CMD []

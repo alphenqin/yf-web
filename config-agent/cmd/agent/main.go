@@ -5,6 +5,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/yf-web/config-agent/internal/config"
 	"github.com/yf-web/config-agent/internal/supervisor"
@@ -54,22 +55,49 @@ func main() {
 
 	// 配置变更回调
 	onConfigChange := func(cfg *config.YafConfig) error {
-		logger.Info("applying new configuration",
+		applyStartTime := time.Now()
+		logger.Info("[CONFIG_APPLY] 收到配置变更，开始应用新配置",
+			zap.Time("apply_time", applyStartTime),
 			zap.String("interface", cfg.Capture.Interface),
-			zap.Bool("applabel", cfg.Capture.EnableAppLabel),
-			zap.Int("output_fields", len(cfg.Output.Fields)),
+			zap.Int("ipfix_port", cfg.Capture.IPFIXPort),
+			zap.Bool("enable_applabel", cfg.Capture.EnableAppLabel),
+			zap.Bool("enable_dpi", cfg.Capture.EnableDPI),
+			zap.Int("max_payload", cfg.Capture.MaxPayload),
+			zap.Int("output_fields_count", len(cfg.Output.Fields)),
+			zap.Strings("output_fields", cfg.Output.Fields),
 		)
 
 		// 生成配置文件
+		generateStartTime := time.Now()
 		if err := generator.Generate(cfg); err != nil {
-			logger.Error("failed to generate config file", zap.Error(err))
+			logger.Error("[CONFIG_APPLY] 配置文件生成失败",
+				zap.Error(err),
+				zap.Duration("generate_duration", time.Since(generateStartTime)),
+			)
 			return err
 		}
+		logger.Info("[CONFIG_APPLY] 配置文件生成成功",
+			zap.String("config_path", configPath),
+			zap.Duration("generate_duration", time.Since(generateStartTime)),
+		)
 
 		// 重启 YAF 和 Pipeline（pipeline 包含 super_mediator + processor）
+		restartStartTime := time.Now()
+		logger.Info("[CONFIG_APPLY] 开始重启进程以应用新配置",
+			zap.Time("restart_time", restartStartTime),
+		)
 		if err := superCtrl.RestartAll(); err != nil {
-			logger.Error("failed to restart processes", zap.Error(err))
+			logger.Error("[CONFIG_APPLY] 进程重启失败",
+				zap.Error(err),
+				zap.Duration("restart_duration", time.Since(restartStartTime)),
+				zap.Duration("total_duration", time.Since(applyStartTime)),
+			)
 			// 不返回错误，配置已写入
+		} else {
+			logger.Info("[CONFIG_APPLY] 配置应用完成",
+				zap.Duration("restart_duration", time.Since(restartStartTime)),
+				zap.Duration("total_duration", time.Since(applyStartTime)),
+			)
 		}
 
 		return nil
