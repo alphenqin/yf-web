@@ -68,16 +68,21 @@ ARG YAF_VERSION=3.0.0.alpha4
 ARG SM_VERSION=2.0.0.alpha3
 
 # 安装编译依赖
+# 直接使用阿里云镜像（网络环境问题，官方源不稳定）
 RUN set -eux; \
     rm -f /etc/apt/sources.list.d/debian.sources || true; \
     echo "deb http://mirrors.aliyun.com/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list; \
     echo "deb http://mirrors.aliyun.com/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list; \
     echo "deb http://mirrors.aliyun.com/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list; \
-    apt-get update; \
+    apt-get update || (echo "ERROR: apt-get update failed" && exit 1); \
     apt-get install -y --no-install-recommends \
         build-essential pkg-config wget curl ca-certificates \
-        libglib2.0-dev libpcap-dev libpcre3-dev zlib1g-dev libssl-dev liblua5.3-dev; \
-    rm -rf /var/lib/apt/lists/*
+        libglib2.0-dev libpcap-dev libpcre3-dev zlib1g-dev libssl-dev liblua5.3-dev || \
+        (echo "ERROR: apt-get install failed" && exit 1); \
+    rm -rf /var/lib/apt/lists/*; \
+    # 验证关键工具是否安装成功
+    command -v curl >/dev/null 2>&1 || (echo "ERROR: curl not installed" && exit 1); \
+    command -v wget >/dev/null 2>&1 || (echo "ERROR: wget not installed" && exit 1)
 
 WORKDIR /tmp
 
@@ -114,16 +119,18 @@ FROM debian:bookworm-slim AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# 直接使用阿里云镜像（网络环境问题，官方源不稳定）
 RUN set -eux; \
     rm -f /etc/apt/sources.list.d/debian.sources || true; \
     echo "deb http://mirrors.aliyun.com/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list; \
     echo "deb http://mirrors.aliyun.com/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list; \
     echo "deb http://mirrors.aliyun.com/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list; \
-    apt-get update; \
+    apt-get update || (echo "ERROR: apt-get update failed" && exit 1); \
     apt-get install -y --no-install-recommends \
         ca-certificates libglib2.0-0 libpcap0.8 libpcre3 zlib1g libssl3 liblua5.3-0 \
         bash procps tcpdump netcat-traditional iproute2 net-tools dnsutils psmisc vim-tiny less \
-        supervisor tzdata; \
+        lsof supervisor tzdata || \
+        (echo "ERROR: apt-get install failed" && exit 1); \
     ln -fs /usr/share/zoneinfo/Asia/Shanghai /etc/localtime; \
     echo "Asia/Shanghai" > /etc/timezone; dpkg-reconfigure -f noninteractive tzdata; \
     rm -rf /var/lib/apt/lists/*
@@ -266,75 +273,137 @@ EOF
 
 RUN cat >/usr/local/bin/start_pipeline.sh <<'EOF'
 #!/usr/bin/env bash
-set -eu
+set -euo pipefail
+
 YAF_CONFIG_FILE="${YAF_CONFIG_FILE:-/etc/yaf/yaf.init}"
 SM_LISTEN_PORT="${SM_LISTEN_PORT:-18000}"
 SM_FIELDS="${SM_FIELDS:-flowStartMilliseconds,flowEndMilliseconds,sourceIPv4Address,destinationIPv4Address,sourceTransportPort,destinationTransportPort,protocolIdentifier,silkAppLabel}"
+
+# 清理占用端口的进程
+kill_port_process() {
+  local port=$1
+  local pid=""
+  
+  # 使用 ss 或 netstat 查找占用端口的进程
+  if command -v ss >/dev/null 2>&1; then
+    pid=$(ss -tlnp 2>/dev/null | grep ":${port} " | grep -oP 'pid=\K[0-9]+' | head -1)
+  elif command -v netstat >/dev/null 2>&1; then
+    pid=$(netstat -tlnp 2>/dev/null | grep ":${port} " | grep -oP '[0-9]+/[^ ]+' | cut -d'/' -f1 | head -1)
+  elif command -v lsof >/dev/null 2>&1; then
+    pid=$(lsof -ti:${port} 2>/dev/null | head -1)
+  fi
+  
+  if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
+    echo "[start_pipeline] 发现进程 ${pid} 占用端口 ${port}，尝试终止..." >&2
+    kill -TERM "$pid" 2>/dev/null || true
+    sleep 1
+    # 如果还没死，强制杀死
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "[start_pipeline] 强制终止进程 ${pid}..." >&2
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+    return 0
+  fi
+  return 1
+}
+
+# 退出时清理子进程，避免残留占用端口
+cleanup() {
+  echo "[start_pipeline] 收到退出信号，清理子进程..." >&2
+  # 清理所有子进程
+  pkill -P $$ 2>/dev/null || true
+  # 清理可能占用端口的进程
+  kill_port_process "${SM_LISTEN_PORT}" || true
+  # 等待子进程退出
+  wait 2>/dev/null || true
+}
+trap cleanup TERM INT EXIT
 
 # 检查端口是否可用，最多等待 10 秒
 check_port() {
   local port=$1
   local max_wait=10
   local waited=0
-  
-  # 优先使用 ss，如果没有则使用 netstat
+
   local check_cmd=""
   if command -v ss >/dev/null 2>&1; then
     check_cmd="ss -tuln"
   elif command -v netstat >/dev/null 2>&1; then
     check_cmd="netstat -tuln"
   else
-    echo "[start_pipeline] WARN: 无法检查端口状态（缺少 ss/netstat），直接启动"
+    echo "[start_pipeline] WARN: 无法检查端口状态（缺少 ss/netstat），直接启动" >&2
     return 0
   fi
-  
+
+  # 如果端口被占用，尝试清理
+  if $check_cmd 2>/dev/null | grep -q ":${port} "; then
+    echo "[start_pipeline] 端口 ${port} 被占用，尝试清理..." >&2
+    kill_port_process "${port}" || true
+    sleep 1
+  fi
+
   while [ $waited -lt $max_wait ]; do
     if ! $check_cmd 2>/dev/null | grep -q ":${port} "; then
-      echo "[start_pipeline] 端口 ${port} 可用"
-      return 0  # 端口可用
+      echo "[start_pipeline] 端口 ${port} 可用" >&2
+      return 0
     fi
-    echo "[start_pipeline] 端口 ${port} 被占用，等待释放... (${waited}/${max_wait}秒)"
+    echo "[start_pipeline] 端口 ${port} 被占用，等待释放... (${waited}/${max_wait}秒)" >&2
+    # 再次尝试清理
+    if [ $waited -eq 0 ] || [ $((waited % 2)) -eq 0 ]; then
+      kill_port_process "${port}" || true
+    fi
     sleep 1
     waited=$((waited + 1))
   done
-  echo "[start_pipeline] WARN: 端口 ${port} 仍被占用，尝试继续启动（可能失败）..."
+
+  echo "[start_pipeline] WARN: 端口 ${port} 仍被占用，尝试继续启动（可能失败）..." >&2
   return 1
 }
 
-echo "[start_pipeline] super_mediator 监听端口: ${SM_LISTEN_PORT}"
-echo "[start_pipeline] TEXT 输出字段: ${SM_FIELDS}"
+echo "[start_pipeline] super_mediator 监听端口: ${SM_LISTEN_PORT}" >&2
+echo "[start_pipeline] TEXT 输出字段: ${SM_FIELDS}" >&2
 
 # 检查端口是否可用
 check_port "${SM_LISTEN_PORT}"
 
+echo "[start_pipeline] 启动 super_mediator，监听 127.0.0.1:${SM_LISTEN_PORT}" >&2
+echo "[start_pipeline] 等待 YAF 连接到 127.0.0.1:${SM_LISTEN_PORT}..." >&2
+
 # 启动 super_mediator 和 processor 管道
-# super_mediator 监听 localhost:${SM_LISTEN_PORT}，等待 YAF 的连接
-# 使用 127.0.0.1 而不是 localhost，避免 DNS 解析问题
-exec /bin/bash -c "
-  set -o pipefail
-  echo \"[start_pipeline] 启动 super_mediator，监听 127.0.0.1:${SM_LISTEN_PORT}\" >&2
-  /usr/local/bin/super_mediator \
-    --ipfix-input=tcp \
-    --ipfix-port=\"${SM_LISTEN_PORT}\" \
-    --output-mode=TEXT \
-    --print-headers \
-    --out=- \
-    --fields=\"${SM_FIELDS}\" \
-    127.0.0.1 2>&1 | \
-  while IFS= read -r line; do
-    # 将 super_mediator 的错误信息输出到 stderr（supervisor 日志）
-    if [[ \"\$line\" =~ (Fatal|Error|ERROR|WARN|warning) ]]; then
-      echo \"[super_mediator] \$line\" >&2
-    fi
-    # 所有行（包括数据）都传给 processor
-    echo \"\$line\"
-  done | /usr/local/bin/processor -config \"${YAF_CONFIG_FILE}\" -data-dir /data
-  processor_exit=\$?
-  if [ \$processor_exit -ne 0 ]; then
-    echo \"[start_pipeline] processor 退出，状态码: \$processor_exit\" >&2
-  fi
-  exit \$processor_exit
-"
+# 使用命名管道分离 stdout 和 stderr，确保错误信息可见
+# super_mediator 的 stderr 输出到 stderr（supervisor 会捕获），stdout 传给 processor
+/usr/local/bin/super_mediator \
+  --ipfix-input=tcp \
+  --ipfix-port="${SM_LISTEN_PORT}" \
+  --output-mode=TEXT \
+  --print-headers \
+  --out=- \
+  --fields="${SM_FIELDS}" \
+  127.0.0.1 2>&1 | \
+/usr/local/bin/processor -config "${YAF_CONFIG_FILE}" -data-dir /data
+
+# 获取 processor 的退出状态（管道中最后一个命令的退出状态）
+processor_exit=$?
+
+# 获取 super_mediator 的退出状态
+sm_exit=${PIPESTATUS[0]}
+
+# 记录退出状态
+echo "[start_pipeline] processor 退出状态: ${processor_exit}, super_mediator 退出状态: ${sm_exit}" >&2
+
+# processor 正常退出（EOF）时返回 0，即使 super_mediator 可能也退出了
+# 这是正常的，因为 super_mediator 可能因为某种原因退出，导致 stdin 关闭
+if [ $processor_exit -eq 0 ]; then
+  echo "[start_pipeline] processor 正常退出（EOF），返回 0" >&2
+  exit 0
+fi
+
+# processor 异常退出，返回其退出状态
+echo "[start_pipeline] processor 异常退出，返回状态码: ${processor_exit}" >&2
+if [ $sm_exit -ne 0 ]; then
+  echo "[start_pipeline] super_mediator 退出状态: ${sm_exit}" >&2
+fi
+exit $processor_exit
 EOF
 
 RUN sed -i 's/\r$//' /usr/local/bin/start_yaf.sh /usr/local/bin/start_pipeline.sh && \
@@ -381,9 +450,9 @@ startsecs=5
 startretries=10
 stopwaitsecs=10
 environment=PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",LD_LIBRARY_PATH="/usr/local/lib:/usr/local/lib64"
-stdout_logfile=/var/log/supervisor/pipeline.log
-stdout_logfile_maxbytes=20MB
-stdout_logfile_backups=5
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stdout_logfile_backups=0
 stderr_logfile=/dev/stdout
 stderr_logfile_maxbytes=0
 stderr_logfile_backups=0
