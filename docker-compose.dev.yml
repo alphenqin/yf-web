@@ -33,6 +33,32 @@ services:
       - zk_datalog_dev:/datalog
     networks:
       - yaf-network-dev
+    healthcheck:
+      test: ["CMD", "zkServer.sh", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # YAF 容器（用于开发测试）
+  # 使用 Host 网络模式以访问主机网络接口捕获流量
+  yaf:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.yaf
+    container_name: yaf-dev
+    network_mode: host
+    environment:
+      ZK_SERVERS: localhost:2181  # host 模式下使用 localhost
+      YAF_CLUSTER: dev-cluster
+      YAF_NODE_ID: dev-node-1
+      YAF_CONFIG_PATH: /etc/yaf/yaf.init
+    volumes:
+      - yaf_logs_dev:/var/log/yaf
+      - yaf_data_dev:/opt/yaf
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    restart: unless-stopped
 
 networks:
   yaf-network-dev:
@@ -42,4 +68,6 @@ volumes:
   postgres_data_dev:
   zk_data_dev:
   zk_datalog_dev:
+  yaf_logs_dev:
+  yaf_data_dev:
 

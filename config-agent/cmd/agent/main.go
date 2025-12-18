@@ -26,15 +26,12 @@ func main() {
 	cluster := getEnv("YAF_CLUSTER", "default")
 	nodeID := getEnv("YAF_NODE_ID", "node-1")
 	configPath := getEnv("YAF_CONFIG_PATH", "/etc/yaf/yaf.init")
-	interface_ := getEnv("YAF_INTERFACE", "eth0")
-	ipfixPort := getEnv("SM_LISTEN_PORT", "18000")
 
 	logger.Info("configuration",
 		zap.String("zk_servers", zkServers),
 		zap.String("cluster", cluster),
 		zap.String("node_id", nodeID),
 		zap.String("config_path", configPath),
-		zap.String("interface", interface_),
 	)
 
 	// 创建 supervisor 控制器
@@ -45,9 +42,9 @@ func main() {
 		logger.Warn("supervisord not detected, restart commands will fail")
 	}
 
-	// 创建模板生成器
+	// 创建模板生成器（interface 和 ipfixPort 使用硬编码默认值）
 	generator, err := template.NewGenerator(
-		configPath, interface_, ipfixPort,
+		configPath,
 		cluster, nodeID,
 		logger,
 	)

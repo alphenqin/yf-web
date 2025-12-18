@@ -112,8 +112,6 @@ type TemplateData struct {
 // Generator 配置文件生成器
 type Generator struct {
 	configPath string
-	interface_ string
-	ipfixPort  string
 	cluster    string
 	nodeID     string
 	logger     *zap.Logger
@@ -122,7 +120,7 @@ type Generator struct {
 
 // NewGenerator 创建生成器
 func NewGenerator(
-	configPath, interface_, ipfixPort string,
+	configPath string,
 	cluster, nodeID string,
 	logger *zap.Logger,
 ) (*Generator, error) {
@@ -133,8 +131,6 @@ func NewGenerator(
 
 	return &Generator{
 		configPath: configPath,
-		interface_: interface_,
-		ipfixPort:  ipfixPort,
 		cluster:    cluster,
 		nodeID:     nodeID,
 		logger:     logger,
@@ -144,14 +140,14 @@ func NewGenerator(
 
 // Generate 生成配置文件
 func (g *Generator) Generate(cfg *config.YafConfig) error {
-	// 使用配置中的值，如果为空则使用环境变量的默认值
+	// 使用配置中的值，如果为空则使用硬编码的默认值
 	iface := cfg.Capture.Interface
 	if iface == "" {
-		iface = g.interface_
+		iface = "eth0" // 硬编码默认网卡名称
 	}
 	ipfixPort := cfg.Capture.IPFIXPort
 	if ipfixPort == 0 {
-		ipfixPort = 18000
+		ipfixPort = 18000 // 硬编码默认 IPFIX 端口
 	}
 	idleTimeout := cfg.Capture.IdleTimeout
 	if idleTimeout == 0 {

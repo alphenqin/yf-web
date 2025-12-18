@@ -64,9 +64,9 @@ const loadConfig = async () => {
     } else {
       // 数据库中没有配置，使用默认配置
       try {
-        const defaultRes = await getDefaultConfig()
+      const defaultRes = await getDefaultConfig()
         if (defaultRes.data) {
-          configData.value = defaultRes.data
+      configData.value = defaultRes.data
         } else {
           // 如果默认配置也为空，使用空对象（ConfigForm 会处理默认值）
           configData.value = {}
@@ -81,9 +81,9 @@ const loadConfig = async () => {
     ElMessage.error('加载配置失败: ' + error.message)
     // 尝试获取默认配置
     try {
-      const defaultRes = await getDefaultConfig()
+    const defaultRes = await getDefaultConfig()
       if (defaultRes.data) {
-        configData.value = defaultRes.data
+    configData.value = defaultRes.data
       } else {
         configData.value = {}
       }
