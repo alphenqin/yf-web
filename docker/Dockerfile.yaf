@@ -386,7 +386,9 @@ trap cleanup_on_exit TERM INT EXIT
 main "$@"
 EOF
 
-RUN chmod +x /usr/local/bin/start_yaf.sh /usr/local/bin/start_pipeline.sh
+# 修复 Windows CRLF 行尾符问题，确保脚本使用 Unix LF 格式
+RUN sed -i 's/\r$//' /usr/local/bin/start_yaf.sh /usr/local/bin/start_pipeline.sh && \
+    chmod +x /usr/local/bin/start_yaf.sh /usr/local/bin/start_pipeline.sh
 
 # === Supervisord 配置：pipeline 先启动，yaf 后启动 ===
 # 关键优化：
